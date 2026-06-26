@@ -473,36 +473,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       portfolio, auth, ccVersion);
     let ad = portfolioResp?.ad ?? null;
     let viewThresholdMs = portfolioResp?.viewThresholdMs ?? 3000;
-    // Paint ad in status bar as a SEPARATE banner surface.
-    // Uses a mutable sessionNonce so the periodic refresh (30s) can start
-    // a new session when the ad rotates — the onTick closure always reads
-    // the CURRENT nonce via sessionNonceRef.
-    const _bannerNonce = { value: crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10)) };
-    let _lastBannerId: string | null = null;
-    if (ad) {
-      _lastBannerId = ad.adId;
-      statusBar.set({ kind: "ad", adText: ad.adText, clickUrl: ad.clickUrl });
-      const sendBannerImpressions = (aid: string, cid: string, st: string, nonce: string) => {
-        metrics.send("impression_rendered", { adId: aid, campaignId: cid,
-          ccVersion, corr: aid + "." + Math.random().toString(36).slice(2, 8),
-          sessionToken: st, surface: "banner",
-          eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: nonce });
-        metrics.send("impression_viewable", { adId: aid, campaignId: cid,
-          ccVersion, corr: aid + "." + Math.random().toString(36).slice(2, 8),
-          sessionToken: st, surface: "banner",
-          eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: nonce });
-      };
-      sendBannerImpressions(ad.adId, ad.campaignId, ad.sessionToken, _bannerNonce.value);
-      // onTick reads the CURRENT nonce — survives ad rotation
-      (statusBar as StatusBar).onTick = () => {
-        try { if (!ad) return; metrics.send("view_tick", { adId: ad.adId, campaignId: ad.campaignId,
-          ccVersion, corr: ad.adId + "." + Math.random().toString(36).slice(2, 8),
-          sessionToken: ad.sessionToken, surface: "banner",
-          visibleMs: 5000, sessionNonce: _bannerNonce.value,
-          eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()) });
-        } catch { /* best-effort */ }
-      };
-    }
     void showActive();
     session.set({ hasAd: !!ad });
 
@@ -668,7 +638,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // recovery doesn't replay the boot-time value; portfolioResp /
     // viewThresholdMs are read at call time (a retry refreshes them first).
     let wvResult: WebviewInjectionResult = { lbInfo: null,
-      reapplyCodex: null, cycleReassert: null, refreshPortfolioNow: null };
+      reapplyCodex: null, cycleReassert: null, refreshPortfolioNow: null,
+      getBannerAd: null };
     const bringUpServing = async (): Promise<void> => {
       wvResult = await setupWebviewInjection({
         ctx, actx, adapter, auth, debugCtl, session, portfolio,
@@ -718,6 +689,49 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       } catch (e) {
         dlog("ext", "antigravity.error", { msg: errMsg(e) });
       }
+    }
+
+    // ─── Banner surface (status bar) ────────────────────────────────
+    // Uses its OWN slot in the ad queue (adQueue[(rotationIdx+1)%len])
+    // so it never shows/bills the same ad as the overlay. 10s poll.
+    {
+      const _bannerNonce = { value: crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10)) };
+      let _lastBannerId: string | null = null;
+
+      const paintBanner = () => {
+        try {
+          const bAd = wvResult.getBannerAd?.() ?? ad;
+          if (!bAd) return;
+          if (bAd.adId !== _lastBannerId) {
+            _lastBannerId = bAd.adId;
+            _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
+            metrics.send("impression_rendered", { adId: bAd.adId, campaignId: bAd.campaignId,
+              ccVersion, corr: bAd.adId + "." + Math.random().toString(36).slice(2, 8),
+              sessionToken: bAd.sessionToken, surface: "banner",
+              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
+            metrics.send("impression_viewable", { adId: bAd.adId, campaignId: bAd.campaignId,
+              ccVersion, corr: bAd.adId + "." + Math.random().toString(36).slice(2, 8),
+              sessionToken: bAd.sessionToken, surface: "banner",
+              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
+          }
+          statusBar.set({ kind: "ad", adText: bAd.adText, clickUrl: bAd.clickUrl });
+        } catch { /* best-effort */ }
+      };
+      // Wire onTick — always bills the CURRENT banner ad's nonce
+      (statusBar as StatusBar).onTick = () => {
+        try {
+          const bAd = wvResult.getBannerAd?.() ?? ad;
+          if (!bAd) return;
+          metrics.send("view_tick", { adId: bAd.adId, campaignId: bAd.campaignId,
+            ccVersion, corr: bAd.adId + "." + Math.random().toString(36).slice(2, 8),
+            sessionToken: bAd.sessionToken, surface: "banner",
+            visibleMs: 5000, sessionNonce: _bannerNonce.value,
+            eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()) });
+        } catch { /* best-effort */ }
+      };
+      // Initial paint + 10s poll (matching the overlay's pollAd interval)
+      paintBanner();
+      actx.timers.push(setInterval(paintBanner, 10_000));
     }
 
     if (ad && override?.killed !== true && webviewMode() === "off") {
@@ -785,32 +799,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
     // ─── Periodic timers ────────────────────────────────────────────
     actx.timers.push(setInterval(checkKill, 30_000));
-    // Banner session refresh every 30s — detect ad changes and reset session.
-    // Uses mutable _bannerNonce so onTick always reads the right nonce.
-    actx.timers.push(setInterval(() => {
-      void showActive();
-      try {
-        if (ad) {
-          const sendImp = (nonce: string) => {
-            metrics.send("impression_rendered", { adId: ad!.adId, campaignId: ad!.campaignId,
-              ccVersion, corr: ad!.adId + "." + Math.random().toString(36).slice(2, 8),
-              sessionToken: ad!.sessionToken, surface: "banner",
-              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: nonce });
-            metrics.send("impression_viewable", { adId: ad!.adId, campaignId: ad!.campaignId,
-              ccVersion, corr: ad!.adId + "." + Math.random().toString(36).slice(2, 8),
-              sessionToken: ad!.sessionToken, surface: "banner",
-              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: nonce });
-          };
-          // Ad changed → new session
-          if (ad.adId !== _lastBannerId) {
-            _lastBannerId = ad.adId;
-            _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
-            sendImp(_bannerNonce.value);
-          }
-          statusBar.set({ kind: "ad", adText: ad.adText, clickUrl: ad.clickUrl });
-        }
-      } catch { /* best-effort */ }
-    }, 30_000));
+    // Banner session is EVENT-DRIVEN — no periodic timer.
+    // Portfolio rotation → `ad` updated → showActive() repaints status bar.
+    // _lastBannerId is tracked in the ad init block above.
     actx.timers.push(setInterval(() => void debugCtl?.reassertTick(), 60_000));
 
     // Tiered desync self-heal. The drift-only reasserts above can't see a

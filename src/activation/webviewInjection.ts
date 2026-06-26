@@ -79,6 +79,10 @@ export interface WebviewInjectionDeps {
 export interface WebviewInjectionResult {
   lbInfo: { port: number; base: string } | null;
   reapplyCodex: (() => void) | null;
+  /** Banner surface gets its OWN slot in the ad queue, distinct from the
+   *  overlay's. Returns the next ad in the buffer so two surfaces never
+   *  show (and bill) the same creative simultaneously. Null when no ads. */
+  getBannerAd: (() => PatchAd | null) | null;
   /** Production-path "hard" reassert: restore + re-applyPatch so the file's
    *  identity changes and VS Code re-evaluates a stale-cached webview module.
    *  Health-gated, guarded, never throws. Null when injection didn't set up
@@ -105,7 +109,7 @@ export async function setupWebviewInjection(
   const ad = adRef.current;
   if (!ad || deps.killed || webviewMode() !== "on") {
     return { lbInfo: null, reapplyCodex: null, cycleReassert: null,
-             refreshPortfolioNow: null };
+             refreshPortfolioNow: null, getBannerAd: null };
   }
 
   // Stable snapshot of the activation-time ad.
@@ -311,7 +315,7 @@ export async function setupWebviewInjection(
     dlog("ext", "loopback.unavailable",
       { port, patched: adapter.isPatched?.() === true });
     return { lbInfo, reapplyCodex: null, cycleReassert: null,
-             refreshPortfolioNow: null };
+             refreshPortfolioNow: null, getBannerAd: null };
   }
 
   // Serving gate (wave 2, audit #14/#19): a crash-canary suspension or a
@@ -443,6 +447,17 @@ export async function setupWebviewInjection(
     timers: actx.timers,
   } as AdRotationDeps, portfolioResp);
 
+  // Banner surface gets its OWN slot: adQueue[(rotationIdx + 1) % len]
+  // so it never shows/bills the same ad as the overlay simultaneously.
+  const getBannerAd = (): PatchAd | null => {
+    try {
+      const q = rotation.adQueue;
+      if (!q || q.length === 0) return null;
+      const idx = (rotation.rotationIdx + 1) % q.length;
+      return q[idx] || null;
+    } catch { return null; }
+  };
+
   return { lbInfo, reapplyCodex, cycleReassert,
-           refreshPortfolioNow: rotation.refreshNow };
+           refreshPortfolioNow: rotation.refreshNow, getBannerAd };
 }
