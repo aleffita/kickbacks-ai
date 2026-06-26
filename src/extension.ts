@@ -473,44 +473,33 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       portfolio, auth, ccVersion);
     let ad = portfolioResp?.ad ?? null;
     let viewThresholdMs = portfolioResp?.viewThresholdMs ?? 3000;
-    // Paint ad in status bar and start a SEPARATE session for it.
-    // The status bar ad uses surface="statusline" with its OWN session_nonce,
-    // completely independent from the webview overlay or banner surfaces.
+    // Paint ad in status bar as a SEPARATE banner surface.
+    // Uses a mutable sessionNonce so the periodic refresh (30s) can start
+    // a new session when the ad rotates — the onTick closure always reads
+    // the CURRENT nonce via sessionNonceRef.
+    const _bannerNonce = { value: crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10)) };
+    let _lastBannerId: string | null = null;
     if (ad) {
+      _lastBannerId = ad.adId;
       statusBar.set({ kind: "ad", adText: ad.adText, clickUrl: ad.clickUrl });
-      // Fire initial impression events for this statusline surface
-      // (independent session from the webview overlay)
-      const ssNonce = crypto.randomUUID?.() ?? ("ss-" + Math.random().toString(36).slice(2));
-      const ssEuid = crypto.randomUUID?.() ?? ("evt-" + Date.now() + "-" + Math.random());
-      metrics.send("impression_rendered", {
-        adId: ad.adId, campaignId: ad.campaignId,
-        ccVersion, corr: ad.adId + "." + Math.random().toString(36).slice(2, 8),
-        sessionToken: ad.sessionToken,
-        surface: "banner",
-        eventUuid: ssEuid,
-        sessionNonce: ssNonce,
-      });
-      metrics.send("impression_viewable", {
-        adId: ad.adId, campaignId: ad.campaignId,
-        ccVersion, corr: ad.adId + "." + Math.random().toString(36).slice(2, 8),
-        sessionToken: ad.sessionToken,
-        surface: "banner",
-        eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()),
-        sessionNonce: ssNonce,
-      });
-      // Wire onTick to send view_tick for the banner surface
-      // (independent session, Hermes-style decay + stop-after-5min)
-      (statusBar as StatusBar).onTick = (intervalMs: number) => {
-        try {
-          metrics.send("view_tick", {
-            adId: ad!.adId, campaignId: ad!.campaignId,
-            ccVersion, corr: ad!.adId + "." + Math.random().toString(36).slice(2, 8),
-            sessionToken: ad!.sessionToken,
-            surface: "banner",
-            visibleMs: intervalMs,
-            sessionNonce: ssNonce,
-            eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()),
-          });
+      const sendBannerImpressions = (aid: string, cid: string, st: string, nonce: string) => {
+        metrics.send("impression_rendered", { adId: aid, campaignId: cid,
+          ccVersion, corr: aid + "." + Math.random().toString(36).slice(2, 8),
+          sessionToken: st, surface: "banner",
+          eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: nonce });
+        metrics.send("impression_viewable", { adId: aid, campaignId: cid,
+          ccVersion, corr: aid + "." + Math.random().toString(36).slice(2, 8),
+          sessionToken: st, surface: "banner",
+          eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: nonce });
+      };
+      sendBannerImpressions(ad.adId, ad.campaignId, ad.sessionToken, _bannerNonce.value);
+      // onTick reads the CURRENT nonce — survives ad rotation
+      (statusBar as StatusBar).onTick = () => {
+        try { if (!ad) return; metrics.send("view_tick", { adId: ad.adId, campaignId: ad.campaignId,
+          ccVersion, corr: ad.adId + "." + Math.random().toString(36).slice(2, 8),
+          sessionToken: ad.sessionToken, surface: "banner",
+          visibleMs: 5000, sessionNonce: _bannerNonce.value,
+          eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()) });
         } catch { /* best-effort */ }
       };
     }
@@ -796,11 +785,30 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
     // ─── Periodic timers ────────────────────────────────────────────
     actx.timers.push(setInterval(checkKill, 30_000));
+    // Banner session refresh every 30s — detect ad changes and reset session.
+    // Uses mutable _bannerNonce so onTick always reads the right nonce.
     actx.timers.push(setInterval(() => {
       void showActive();
-      // Refresh status bar ad from current portfolio
       try {
-        if (ad) statusBar.set({ kind: "ad", adText: ad.adText, clickUrl: ad.clickUrl });
+        if (ad) {
+          const sendImp = (nonce: string) => {
+            metrics.send("impression_rendered", { adId: ad!.adId, campaignId: ad!.campaignId,
+              ccVersion, corr: ad!.adId + "." + Math.random().toString(36).slice(2, 8),
+              sessionToken: ad!.sessionToken, surface: "banner",
+              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: nonce });
+            metrics.send("impression_viewable", { adId: ad!.adId, campaignId: ad!.campaignId,
+              ccVersion, corr: ad!.adId + "." + Math.random().toString(36).slice(2, 8),
+              sessionToken: ad!.sessionToken, surface: "banner",
+              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: nonce });
+          };
+          // Ad changed → new session
+          if (ad.adId !== _lastBannerId) {
+            _lastBannerId = ad.adId;
+            _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
+            sendImp(_bannerNonce.value);
+          }
+          statusBar.set({ kind: "ad", adText: ad.adText, clickUrl: ad.clickUrl });
+        }
       } catch { /* best-effort */ }
     }, 30_000));
     actx.timers.push(setInterval(() => void debugCtl?.reassertTick(), 60_000));
