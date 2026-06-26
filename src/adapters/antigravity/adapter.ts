@@ -1,27 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync } from "node:fs";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname } from "node:path";
 import type { TargetAdapter, PreflightResult, OpResult, RestoreResult, PatchParams, AdapterDiagnostics } from "../types";
 import { dlog } from "../../log";
 import { sha256 } from "../../util/crypto";
 import { resolveAsset } from "../../util/asset";
-
-/**
- * Antigravity IDE — Jetski Agent (Cascade) Adapter
- *
- * Patches the Antigravity IDE's native Cascade/jetskiAgent webview bundle
- * to inject Kickbacks.ai ad creative into the agent thinking indicator.
- *
- * Target: /Applications/Antigravity IDE.app/Contents/Resources/app/out/jetskiAgent/main.js
- *
- * Also patches the sibling cascade-panel.html to relax the webview CSP
- * (add connect-src for the loopback), mirroring the Claude Code adapter's
- * approach of patching extension.js.
- *
- * Detection anchor: text-content matching for status strings like
- * "Thinking", "Working", "Processing", "RUNNING". The injected block
- * uses a MutationObserver + text-content matching to find the thinking
- * indicator at runtime and positions an ad overlay below it.
- */
 
 const ANCHORS = [
   '"Thinking"', '"Working"', '"Processing"',
@@ -53,64 +35,6 @@ export class AntigravityAdapter implements TargetAdapter {
   constructor(target: string) { this.target = resolve(target); }
 
   private backupPath(): string { return this.target + ".kickbacks-backup"; }
-
-  private cascadePanelHtmlPath(): string {
-    return join(dirname(dirname(dirname(this.target))), "extensions", "antigravity", "cascade-panel.html");
-  }
-
-  private cspBackupPath(): string {
-    return this.cascadePanelHtmlPath() + ".kickbacks-csp-backup";
-  }
-
-  private readonly CSP_MARK = "kickbacks-csp-connect";
-  private readonly CSP_CONNECT = "connect-src http://127.0.0.1:* http://localhost:*";
-
-  /** Add a CSP meta tag to cascade-panel.html so the injected block can
-   *  reach the loopback. IMPORTANT: we ONLY add connect-src, never
-   *  default-src or script-src — VS Code already sets those for the
-   *  webview, and overriding them would break the entire Cascade panel.
-   *  Idempotent; reversible via restoreCsp. */
-  private patchCspWithReason(): { ok: boolean; reason?: string } {
-    try {
-      const html = this.cascadePanelHtmlPath();
-      if (!existsSync(html)) return { ok: false, reason: "no-sibling" };
-      let src = readFileSync(html, "utf8");
-      if (src.includes(this.CSP_MARK)) return { ok: true, reason: "already" };
-      const bak = this.cspBackupPath();
-      if (!existsSync(bak)) writeFileSync(bak, src);
-      // Add ONLY connect-src — do NOT touch default-src (that's managed by
-      // VS Code's webview runtime and must not be overridden).
-      const cspTag = `<meta http-equiv="Content-Security-Policy" content="${this.CSP_CONNECT};" data-kickbacks="${this.CSP_MARK}">\n`;
-      const headEnd = src.indexOf("</head>");
-      if (headEnd !== -1) {
-        src = src.slice(0, headEnd) + "  " + cspTag + src.slice(headEnd);
-      } else {
-        const htmlOpen = src.indexOf("<html");
-        if (htmlOpen !== -1) {
-          const closeTag = src.indexOf(">", htmlOpen);
-          src = src.slice(0, closeTag + 1) + "\n  " + cspTag + src.slice(closeTag + 1);
-        } else {
-          src = cspTag + src;
-        }
-      }
-      writeFileSync(html, src);
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, reason: "io-err" };
-    }
-  }
-
-  /** Revert the CSP HTML patch from pristine backup. */
-  private restoreCsp(): void {
-    try {
-      const bak = this.cspBackupPath();
-      if (!existsSync(bak)) return;
-      const pristine = readFileSync(bak);
-      writeFileSync(this.cascadePanelHtmlPath(), pristine);
-      if (sha256(readFileSync(this.cascadePanelHtmlPath())) === sha256(pristine))
-        unlinkSync(bak);
-    } catch { /* best-effort */ }
-  }
 
   version(): string | null {
     try {
@@ -182,9 +106,6 @@ export class AntigravityAdapter implements TargetAdapter {
       __VIBE_ADS_CLICKTOKEN__: JSON.stringify(p.clickToken),
       __VIBE_ADS_CLICKURL__: JSON.stringify(p.clickUrl),
       __VIBE_ADS_CORR__: JSON.stringify(p.corr),
-      __VIBE_ADS_VIEW_THRESHOLD_MS__:
-        String(typeof p.viewThresholdMs === "number"
-          && p.viewThresholdMs > 0 ? p.viewThresholdMs : 15000),
     };
     for (const [k, v] of Object.entries(subs))
       src = src.split(k).join(v);
@@ -208,10 +129,6 @@ export class AntigravityAdapter implements TargetAdapter {
       if (sha256(outBuf) !== sha256(readFileSync(this.target)))
         atomicWriteFile(this.target, outBuf);
 
-      // Relax the webview CSP so the loopback is reachable
-      const cspResult = this.patchCspWithReason();
-      dlog("ext", "antigravity.csp", { ok: cspResult.ok, reason: cspResult.reason || "ok" });
-
       dlog("ext", "antigravity.patch", { target: this.target });
       return { ok: true };
     } catch (e) {
@@ -220,14 +137,10 @@ export class AntigravityAdapter implements TargetAdapter {
   }
 
   restore(opts?: { keepCsp?: boolean }): RestoreResult {
-    // Revert the visible block from main.js
     try {
       const bak = this.backupPath();
-      if (!existsSync(bak)) {
-        // No JS backup — still revert the CSP if requested
-        if (!opts?.keepCsp) this.restoreCsp();
+      if (!existsSync(bak))
         return { ok: true, restored: false, reason: "no backup present" };
-      }
       const pristine = readFileSync(bak);
       let out = pristine;
       if (pristine.indexOf(BLOCK_START) !== -1) {
@@ -239,8 +152,6 @@ export class AntigravityAdapter implements TargetAdapter {
       if (now !== sha256(out))
         return { ok: false, restored: false, reason: "sha256 mismatch after restore" };
       unlinkSync(bak);
-      // Revert the HTML CSP patch
-      if (!opts?.keepCsp) this.restoreCsp();
       return { ok: true, restored: true };
     } catch (e) {
       return { ok: false, restored: false, reason: String(e) };
