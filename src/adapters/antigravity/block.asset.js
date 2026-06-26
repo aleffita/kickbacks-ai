@@ -52,28 +52,52 @@
   /** Find the active thinking step container.
    *  Returns the flex container element, or null if agent is idle. */
   function findActiveStep() {
-    // Look for <span class="text-secondary-foreground"> containing "Thinking"/"Working"
+    // Cached counts for debug
+    var allSpans = document.querySelectorAll('span');
+    DB("total spans:", allSpans.length);
+
+    // Strategy 1: class-based — look for span with class text-secondary-foreground
     var spans = document.querySelectorAll('span.text-secondary-foreground');
+    DB("spans with text-secondary-foreground class:", spans.length);
     for (var i = 0; i < spans.length; i++) {
       var text = spans[i].textContent || "";
+      DB("  span[" + i + "]:", text.trim().slice(0, 50));
       if (isActiveStep(text)) {
-        // Walk up to the flex container: span → button → div.relative → div.flex.flex-col
+        // Walk up to the flex container
         var step = spans[i].closest('div.flex');
         if (step) {
-          DB("found active step:", text.trim().slice(0, 40));
+          DB("found via class, container classes:", step.className);
           return step;
         }
-        // Fallback: parent traversal
+        // Fallback: walk up looking for a flex div
         var el = spans[i].parentElement;
-        for (var j = 0; j < 5 && el; j++) {
+        for (var j = 0; j < 10 && el; j++) {
           if (el.tagName === "DIV" && (el.className || "").indexOf("flex") !== -1) {
-            DB("found step via fallback:", text.trim().slice(0, 40));
+            DB("found via class+fallback, container:", el.className.slice(0, 60));
             return el;
           }
           el = el.parentElement;
         }
       }
     }
+
+    // Strategy 2: text-based — scan ALL elements for "Thinking"/"Working" text
+    DB("trying text-based scan...");
+    var all = document.querySelectorAll('span, div, button');
+    for (var i = 0; i < all.length; i++) {
+      var t = (all[i].textContent || "").toLowerCase().trim();
+      if (t.indexOf("thinking") !== -1 || t.indexOf("working") !== -1) {
+        DB("text match:", all[i].tagName, (all[i].className || "").slice(0, 40),
+            "text:", t.slice(0, 40));
+        var container = all[i].closest('div.flex');
+        if (container) {
+          DB("found via text, container:", container.className.slice(0, 60));
+          return container;
+        }
+      }
+    }
+
+    DB("no active step found");
     return null;
   }
 
@@ -158,6 +182,22 @@
         }).catch(function () {});
     } catch (e) {}
   }
+
+  // ── Visual Proof of Life ──────────────────────────────────────────────
+  // Add a small indicator at the top of the page so we can tell the block
+  // is running, even if findActiveStep() isn't working yet.
+  (function showPulse() {
+    try {
+      var pulse = document.createElement("div");
+      pulse.id = "kb-pulse";
+      pulse.style.cssText = "position:fixed;top:2px;right:2px;z-index:2147483647;" +
+        "width:8px;height:8px;border-radius:50%;background:#4ade80;" +
+        "box-shadow:0 0 4px #4ade80;transition:opacity 1s";
+      pulse.title = "Kickbacks loaded: " + AD;
+      (document.body || document.documentElement).appendChild(pulse);
+      DB("pulse indicator added");
+    } catch (e) { DB("pulse error:", e.message); }
+  })();
 
   // ── Start ────────────────────────────────────────────────────────────
   DB("block.start");
