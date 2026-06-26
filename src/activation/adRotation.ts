@@ -244,6 +244,7 @@ export function setupAdRotation(
   deps: AdRotationDeps,
   portfolioResp: PortfolioResponse | null,
 ): AdRotationHandle {
+  dlog("ext", "rotation.setup", { adQueueLen: (portfolioResp?.ads ?? []).length });
   const state: AdRotationState = {
     adQueue: portfolioResp?.ads ?? [],
     rotationIdx: 0,
@@ -259,6 +260,7 @@ export function setupAdRotation(
   }
 
   deps.timers.push(setInterval(() => void refreshPortfolio(deps, state), 60_000));
+  dlog("ext", "rotation.refresh_timer_armed", {});
   // Augment the LIVE state object in place (don't copy — the timers mutate it).
   const handle = state as AdRotationHandle;
   handle.refreshNow = (force = false) => refreshPortfolio(deps, state, force);
