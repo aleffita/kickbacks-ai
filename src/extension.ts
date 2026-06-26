@@ -714,7 +714,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             const id = j.adId || j.adText;
             const txt = j.adText;
             const url = j.clickUrl || "";
-            const icon = j.iconUrl || "";
             const changed = (j.adId && j.adId !== _lastBannerId)
                          || (txt !== _lastBannerText)
                          || (url !== _lastBannerUrl);

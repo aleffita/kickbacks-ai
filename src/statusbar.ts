@@ -151,15 +151,17 @@ export class StatusBar {
     // Always produce exactly w characters of visible text. Use spaces for
     // padding (not special Unicode spaces, which render inconsistently).
     // This keeps the status bar slot at a stable pixel width.
-    if (raw.length <= w) {
-      this.adItem.text = text.padEnd(w, " ");
+    const prefix = "$(megaphone) ";
+    if (raw.length <= w - prefix.length) {
+      this.adItem.text = prefix + text.padEnd(w - prefix.length, " ");
       this.adItem.tooltip = `Open ${this._adClickUrl || raw}`;
       return;
     }
     // Marquee: always render exactly w characters. The sliding window
     // changes WHICH w characters are visible, not HOW MANY.
     const gap = "   >>   ";
-    const padded = raw + gap + raw;
+    const content = prefix + raw;
+    const padded = content + gap + content;
     const maxStart = Math.max(0, padded.length - w);
     const start = this._marqueeOffset % (maxStart + 1);
     const slice = padded.slice(start, start + w);
