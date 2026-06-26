@@ -698,6 +698,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     {
       const _bannerNonce = { value: crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10)) };
       let _lastBannerId: string | null = null;
+      let _lastBannerText = "";
+      let _lastBannerUrl = "";
       let _bannerFetchCount = 0;
 
       const fetchBannerAd = () => {
@@ -707,16 +709,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           _bannerFetchCount++;
           fetch(loopbase + "/ad").then(r => r.json()).then(j => {
             if (!j || !j.adText) return;
-            if (!j.adId && !j.adText) return;
+            // Match the overlay's change detection (block.asset.js pollAd):
+            // adId, adText, clickUrl, iconUrl — any change = new creative
             const id = j.adId || j.adText;
-            const text = j.adText;
+            const txt = j.adText;
             const url = j.clickUrl || "";
+            const icon = j.iconUrl || "";
+            const changed = (j.adId && j.adId !== _lastBannerId)
+                         || (txt !== _lastBannerText)
+                         || (url !== _lastBannerUrl);
             if (_bannerFetchCount <= 5 || _bannerFetchCount % 30 === 0) {
               dlog("ext", "banner.fetch", { n: _bannerFetchCount, adId: String(id).slice(0,12),
-                adText: String(text).slice(0,30) });
+                adText: String(txt).slice(0,30), changed });
             }
-            if (id !== _lastBannerId) {
-              _lastBannerId = id;
+            if (changed) {
+              _lastBannerId = j.adId || null;
+              _lastBannerText = txt;
+              _lastBannerUrl = url;
               _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
               metrics.send("impression_rendered", { adId: id, campaignId: "",
                 ccVersion, corr: id + "." + Math.random().toString(36).slice(2, 8),
@@ -727,7 +736,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
                 sessionToken: "", surface: "banner",
                 eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
             }
-            statusBar.set({ kind: "ad", adText: text, clickUrl: url });
+            // Always update the display — keeps text in sync even when adId
+            // hasn't changed but the creative rotated (same vendor, new copy).
+            statusBar.set({ kind: "ad", adText: txt, clickUrl: url });
           }).catch((e) => { dlog("ext", "banner.fetch_error", { msg: String(e).slice(0,80) }); });
         } catch (e) { dlog("ext", "banner.fetch_crash", { msg: String(e).slice(0,80) }); }
       };
