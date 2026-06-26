@@ -728,8 +728,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
                 eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
             }
             statusBar.set({ kind: "ad", adText: text, clickUrl: url });
-          }).catch(() => {});
-        } catch { /* best-effort */ }
+          }).catch((e) => { dlog("ext", "banner.fetch_error", { msg: String(e).slice(0,80) }); });
+        } catch (e) { dlog("ext", "banner.fetch_crash", { msg: String(e).slice(0,80) }); }
       };
       // Wire onTick — reads from the mutable NONCE, banner fetches update it
       (statusBar as StatusBar).onTick = () => {
