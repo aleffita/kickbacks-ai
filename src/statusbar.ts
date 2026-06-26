@@ -24,11 +24,11 @@ const AD_COLOR = "#dba110"; // amber/gold — distinct from earnings green
  * stops after 5 min AFK (Hermes-style).
  */
 export class StatusBar {
-  // Earnings item (priority 1000 = right-most)
-  private item = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right, 1000);
-  // Ad item (priority 999 = just left of earnings)
+  // Ad item (priority 1000 = right-most, ad visible first)
   private adItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right, 1000);
+  // Earnings item (priority 999 = just left of ad)
+  private item = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right, 999);
 
   // ── Activity tracking ──────────────────────────────────────────────
