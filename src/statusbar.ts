@@ -145,22 +145,26 @@ export class StatusBar {
   }
 
   private _paintAd(): void {
-    const text = this.escape(this._adText);
+    const raw = this._adText;
+    const text = this.escape(raw);
     const w = StatusBar.AD_WIDTH;
-    if (text.length <= w) {
-      // Short text: left-align, pad right with spaces to fix width
-      this.adItem.text = text.padEnd(w, " ");
-      this.adItem.tooltip = `Open ${this._adClickUrl || this._adText}`;
+    // Always produce exactly w characters of visible text. Use spaces for
+    // padding (not special Unicode spaces, which render inconsistently).
+    // This keeps the status bar slot at a stable pixel width.
+    if (raw.length <= w) {
+      this.adItem.text = text.padEnd(w, " ");
+      this.adItem.tooltip = `Open ${this._adClickUrl || raw}`;
       return;
     }
-    // Marquee: slide a window of text inside the fixed-width slot.
-    // Pad with a gap marker so the scroll wraps cleanly.
-    const padded = text + "  ◆  " + text;   // ◆ separator
-    const maxStart = padded.length - w;
+    // Marquee: always render exactly w characters. The sliding window
+    // changes WHICH w characters are visible, not HOW MANY.
+    const gap = "   >>   ";
+    const padded = raw + gap + raw;
+    const maxStart = Math.max(0, padded.length - w);
     const start = this._marqueeOffset % (maxStart + 1);
     const slice = padded.slice(start, start + w);
-    this.adItem.text = slice.padEnd(w, " ");
-    this.adItem.tooltip = `Open ${this._adClickUrl || this._adText}\n${this._adText}`;
+    this.adItem.text = this.escape(slice).padEnd(w, " ");
+    this.adItem.tooltip = `Open ${this._adClickUrl || raw}\n${raw}`;
   }
 
   private _stopMarquee(): void {
