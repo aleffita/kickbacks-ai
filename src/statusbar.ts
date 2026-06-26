@@ -116,6 +116,7 @@ export class StatusBar {
 
   /** Show or update the ad item alongside the earnings. */
   setAd(text: string, clickUrl: string, iconUrl?: string): void {
+    try { console.log("[Kickbacks] setAd called:", text.slice(0, 40)); } catch {}
     this._adText = text;
     this._adClickUrl = clickUrl;
     this._adIconUrl = iconUrl || "";

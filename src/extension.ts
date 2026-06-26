@@ -473,7 +473,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       portfolio, auth, ccVersion);
     let ad = portfolioResp?.ad ?? null;
     let viewThresholdMs = portfolioResp?.viewThresholdMs ?? 3000;
-    // Show ad in status bar immediately after portfolio resolves
+    // Paint ad in status bar immediately (independent of showActive flow)
+    if (ad) {
+      statusBar.set({ kind: "ad", adText: ad.adText, clickUrl: ad.clickUrl });
+    }
     void showActive();
     session.set({ hasAd: !!ad });
 
