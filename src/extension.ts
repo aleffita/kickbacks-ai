@@ -486,7 +486,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         adId: ad.adId, campaignId: ad.campaignId,
         ccVersion, corr: ad.adId + "." + Math.random().toString(36).slice(2, 8),
         sessionToken: ad.sessionToken,
-        surface: "statusline",
+        surface: "banner",
         eventUuid: ssEuid,
         sessionNonce: ssNonce,
       });
@@ -494,19 +494,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         adId: ad.adId, campaignId: ad.campaignId,
         ccVersion, corr: ad.adId + "." + Math.random().toString(36).slice(2, 8),
         sessionToken: ad.sessionToken,
-        surface: "statusline",
+        surface: "banner",
         eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()),
         sessionNonce: ssNonce,
       });
-      // Wire onTick to send view_tick for the statusline surface
-      // (independent session, Hermes-style decay handled by StatusBar)
+      // Wire onTick to send view_tick for the banner surface
+      // (independent session, Hermes-style decay + stop-after-5min)
       (statusBar as StatusBar).onTick = (intervalMs: number) => {
         try {
           metrics.send("view_tick", {
             adId: ad!.adId, campaignId: ad!.campaignId,
             ccVersion, corr: ad!.adId + "." + Math.random().toString(36).slice(2, 8),
             sessionToken: ad!.sessionToken,
-            surface: "statusline",
+            surface: "banner",
             visibleMs: intervalMs,
             sessionNonce: ssNonce,
             eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()),
