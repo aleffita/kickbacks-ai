@@ -2,6 +2,16 @@
 (function () {
   "use strict";
 
+  // ── Debug ─────────────────────────────────────────────────────────
+  // console.log is visible in the Cascade panel's webview DevTools.
+  // Open via: Help → Toggle Developer Tools, or Cmd+Shift+I on the
+  // Cascade panel. Filter by "[Kickbacks]" to see our logs.
+  var DB = function () {
+    try { console.log("[Kickbacks]", Array.prototype.join.call(arguments, " ")); }
+    catch (e) {}
+  };
+  DB("block loading on", location.href);
+
   var TIER = __VIBE_ADS_TIER__;
   var AD = __VIBE_ADS_AD__;
   var ICON_REF = __VIBE_ADS_ICON__;
@@ -15,6 +25,8 @@
   var BASE = __VIBE_ADS_BASE__ || ("http://127.0.0.1:" + PORT + "/vibe-ads/" + LBTOKEN);
   var DEBUG = __VIBE_ADS_DEBUG__;
   var VIEW_THRESHOLD_MS = __VIBE_ADS_VIEW_THRESHOLD_MS__;
+
+  DB("AD:", AD, "PORT:", PORT, "BASE:", BASE);
 
   var _seq = 0;
   function dlog(evt, data) {
@@ -47,11 +59,9 @@
     return "evt-" + Date.now() + "-" + Math.random();
   }
 
-  // ── JetskiAgent / Cascade Panel ──────────────────────────────────────
-  // The Cascade panel renders inside #react-app. When the agent is
-  // running/thinking it shows status text like "Thinking", "Working",
-  // "Processing", "Running", etc. We observe the DOM for these text
-  // patterns and position our overlay over the thinking indicator.
+  // ── Agent status text detection ───────────────────────────────────
+  // We look for textContent containing status keywords inside #react-app.
+  // The Cascade panel shows: "Working..." → "Thinking for Xs" → "Thought"
 
   var STATUS_KEYWORDS = ["thinking", "working", "processing", "running",
     "generating", "waiting", "analyzing", "executing task"];
@@ -66,26 +76,37 @@
     return false;
   }
 
-  // Find the most specific element that indicates agent thinking.
-  // We look for leaf-ish elements (few children) whose text content
-  // matches a status keyword AND whose visible parent can be used
-  // for positioning.
+  // Full-document scan (not just #react-app) in case the status is
+  // rendered outside the React root.
   function findThinkingIndicator() {
+    // Strategy 1: look inside #react-app (the Cascade mount point)
     var container = document.getElementById("react-app");
-    if (!container) return null;
+    if (!container) {
+      DB("no #react-app yet");
+      // Strategy 2: fallback to full-document scan
+      container = document.body || document.documentElement;
+      if (!container) return null;
+    }
     var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
     var node;
     while ((node = walker.nextNode())) {
       var text = (node.textContent || "").trim();
-      if (isAgentActive(text)) {
+      if (text && isAgentActive(text)) {
         var el = node.parentElement;
-        if (el && el.offsetParent !== null) return el;
+        if (el && el.offsetParent !== null) {
+          DB("found thinking indicator:", text.slice(0, 60));
+          return el;
+        }
       }
+    }
+    // No match found — check if any visible text exists at all
+    if (container && container.textContent && container.textContent.trim()) {
+      // DB("container has text but no keyword match");
     }
     return null;
   }
 
-  // ── Overlay ──────────────────────────────────────────────────────────
+  // ── Overlay ────────────────────────────────────────────────────────
 
   var _overlay = null;
   var _active = false;
@@ -101,9 +122,9 @@
   function buildAdHtml() {
     var href = CLICKURL ? esc(CLICKURL) : "#";
     var fg = "var(--vscode-foreground,currentColor)";
-    var dim = "var(--vscode-descriptionForeground,currentColor)";
     return '<span style="display:flex;align-items:center;gap:6px;width:100%;' +
       'box-sizing:border-box;padding:0 16px;white-space:nowrap;overflow:hidden">' +
+      '<span style="color:' + fg + ';font-size:11px;margin-right:6px">ad·</span>' +
       '<a href="' + href + '" target="_blank" rel="noopener noreferrer" ' +
       'data-vb-ad="1" style="color:' + fg + ';text-decoration:underline;' +
       'overflow:hidden;white-space:nowrap">' + esc(AD) + '</a></span>';
@@ -117,8 +138,10 @@
         "position:fixed;z-index:2147483646;pointer-events:auto;" +
         "display:flex;align-items:center;box-sizing:border-box;" +
         "background:var(--vscode-editor-background,#1e1e1e);" +
-        "visibility:hidden;border-radius:4px;padding:2px 0";
+        "visibility:hidden;border:1px solid var(--vscode-widget-border,#444);" +
+        "border-radius:4px;padding:2px 0";
       document.body.appendChild(_overlay);
+      DB("overlay element created");
     }
     var r = target.getBoundingClientRect();
     if (r && (r.width > 0 || r.height > 0)) {
@@ -130,7 +153,10 @@
         _overlay.style.minWidth = Math.min(r.width, 400) + "px";
         _overlay.style.visibility = "visible";
         _overlay.innerHTML = buildAdHtml();
+        DB("overlay placed at", key);
       }
+    } else {
+      DB("target has no layout rect");
     }
   }
 
@@ -141,13 +167,12 @@
     _active = false;
     _sig = "";
     _sentRender = false;
+    DB("overlay dropped");
   }
 
-  // ── Evaluation Loop ──────────────────────────────────────────────────
-  // Periodically check if the agent is running/thinking. When active,
-  // render the ad overlay positioned below the thinking indicator.
-  // The same pattern as the Claude Code block but with text-content
-  // detection instead of glyph/spinnerRow_ class detection.
+  // ── Evaluation Loop ────────────────────────────────────────────────
+
+  var _noReactLogged = false;
 
   function evaluate() {
     try {
@@ -157,52 +182,64 @@
           ping("impression_rendered?surface=overlay&ad=" + encodeURIComponent(AD)
             + "&event_uuid=" + encodeURIComponent(newEventUuid()));
           _sentRender = true;
+          DB("impression_rendered sent");
         }
         placeOverlay(indicator);
         _active = true;
       } else {
         if (_active) {
-          ping("view_threshold_met?surface=overlay&ad=" + encodeURIComponent(AD)
-            + "&visible_ms=1&event_uuid=" + encodeURIComponent(newEventUuid()));
+          DB("agent went idle, dropping overlay");
+          if (_overlay) dropOverlay();
+          _active = false;
         }
-        if (_overlay) dropOverlay();
-        _active = false;
       }
-    } catch (e) { /* prime directive */ }
+    } catch (e) {
+      DB("evaluate error:", e.message);
+    }
   }
 
-  // ── Poll Ad (rotation) ───────────────────────────────────────────────
+  // ── Ad rotation poll ──────────────────────────────────────────────
+
   function pollAd() {
     try {
       fetch(BASE + "/ad").then(function (r) { return r.json(); })
         .then(function (j) {
           if (!j || !j.adText) return;
           if (j.adText !== AD || j.clickUrl !== CLICKURL) {
+            DB("ad rotated:", j.adText);
             AD = j.adText;
             CLICKURL = j.clickUrl || "";
-            _sig = ""; // force rebuild
+            _sig = "";
             _sentRender = false;
           }
         }).catch(function () {});
     } catch (e) {}
   }
 
-  // ── Start ────────────────────────────────────────────────────────────
-  dlog("block.start", { base: BASE, tier: TIER });
+  // ── Start ──────────────────────────────────────────────────────────
 
-  // Use MutationObserver on #react-app for fast reactivity
-  var appContainer = document.getElementById("react-app");
+  DB("block.start");
+
+  // MutationObserver on #react-app (or body as fallback)
+  var appContainer = document.getElementById("react-app") || document.body;
   if (appContainer) {
     var observer = new MutationObserver(function () { evaluate(); });
-    observer.observe(appContainer, { childList: true, subtree: true, characterData: true });
+    observer.observe(appContainer, {
+      childList: true, subtree: true, characterData: true
+    });
+    DB("observer attached to", appContainer.id || appContainer.tagName);
+  } else {
+    DB("no container for observer");
   }
 
   setInterval(evaluate, 500);
   setInterval(pollAd, 10000);
   setTimeout(pollAd, 5000);
   setTimeout(evaluate, 100);
+  setTimeout(evaluate, 1000);
+  setTimeout(evaluate, 3000);
 
-  // Frame-based position refresh
+  // Frame-based position refresh (keeps overlay glued to element)
   function frame() {
     if (_active && _overlay) {
       var ind = findThinkingIndicator();
@@ -211,5 +248,7 @@
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  DB("block fully loaded");
 })();
 /* VIBE-ADS-END */
