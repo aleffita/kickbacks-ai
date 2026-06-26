@@ -10,7 +10,7 @@ import { compareClaudeCodeInstall } from "../util/claudeCodeVersion";
 // local (.vscode/.vscode-insiders/.cursor) AND remote/server hosts
 // (Remote-SSH, dev containers, vscode.dev) where extensions live under
 // *-server/.
-const ROOTS = [".vscode", ".vscode-insiders", ".vscode-server",
+const ROOTS = [".antigravity-ide", ".antigravity", ".vscode", ".vscode-insiders", ".vscode-server",
   ".vscode-server-insiders", ".cursor", ".cursor-server"]
   .map((d) => join(homedir(), d, "extensions"));
 

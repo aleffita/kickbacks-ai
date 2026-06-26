@@ -25,10 +25,12 @@ export function locateClaudeCode(): string | null {
   const explicit = process.env.KICKBACKS_CC_TARGET
     || process.env.VIBE_ADS_CC_TARGET;
   if (explicit && existsSync(explicit)) return explicit;
-  // Covers local (.vscode/.vscode-insiders/.cursor) AND remote/server hosts
+  // Covers local (.antigravity-ide/.antigravity/.vscode/.vscode-insiders/.cursor) AND remote/server hosts
   // (Remote-SSH, dev containers, vscode.dev) where extensions live under
   // *-server/. Keep in sync with ROOTS in adapters/registry.ts.
-  for (const root of [join(homedir(), ".vscode", "extensions"),
+  for (const root of [join(homedir(), ".antigravity-ide", "extensions"),
+                       join(homedir(), ".antigravity", "extensions"),
+                       join(homedir(), ".vscode", "extensions"),
                        join(homedir(), ".vscode-insiders", "extensions"),
                        join(homedir(), ".vscode-server", "extensions"),
                        join(homedir(), ".vscode-server-insiders", "extensions"),
