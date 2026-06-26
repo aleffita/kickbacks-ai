@@ -448,10 +448,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // painted by showActive, never ad creative. Ads live on the spinner
     // verb, the in-window overlay, and the TUI statusline (cliTick bills
     // that one) — so no isAdShowing arbiter is wired here anymore.
+    // adRef is a lazy getter — it reads the module-scoped `ad` variable
+    // which is set AFTER the portfolio fetch (below). By default it's null;
+    // the getter is only evaluated when showActive() paints, by which time
+    // the portfolio has resolved.
+    let _adGetter: (() => { adText: string; clickUrl?: string } | null) =
+      () => null;
     const { showActive, scheduleEarningsRefresh } = setupEarningsRefresh(
-      // `undefined` keeps isAdShowing's default; capWarning is the new arg.
       auth, earningsClient, session, statusBar, ccVersion, ctx, undefined,
-      capWarning, fleetSignals);
+      capWarning, fleetSignals,
+      { get current() { return _adGetter(); } });
+    // Wire the real getter once `ad` is available (below)
+    _adGetter = () => ad ? { adText: ad.adText, clickUrl: ad.clickUrl } : null;
 
     // ─── Portfolio ──────────────────────────────────────────────────
     // Signed in → the real, user-crediting portfolio. Signed out (incl. a

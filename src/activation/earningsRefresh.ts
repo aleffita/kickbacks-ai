@@ -36,6 +36,9 @@ export function setupEarningsRefresh(
   // paints from the store and the standalone GET /v1/earnings stands down.
   // null/old-backend (no `cap` key on the carrier) keeps today's behavior.
   signals: FleetSignals | null = null,
+  // Optional ad reference: when set, the status bar also shows the ad text
+  // alongside the earnings. The ad updates via portfolio refresh.
+  adRef?: { current: { adText: string; clickUrl?: string } | null },
 ): EarningsRefreshResult {
   let lastUsd: string | undefined;
   let lastToday: string | undefined;
@@ -130,6 +133,16 @@ export function setupEarningsRefresh(
     if (isAdShowing()) return;
     statusBar.set({ kind: "active", version: ccVersion,
                     usd: lastUsd, usdToday: lastToday });
+    // Also show the ad in the status bar if available (standalone surface,
+    // independent of webview patches). The ad is a second status bar item.
+    try {
+      const cur = adRef?.current;
+      if (cur?.adText) {
+        (statusBar as any).setAd?.(cur.adText, cur.clickUrl || "");
+      } else {
+        (statusBar as any).hideAd?.();
+      }
+    } catch { /* best-effort */ }
   };
 
   // Piggybacked balances repaint immediately — this replaces the old
