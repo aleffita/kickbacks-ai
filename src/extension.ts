@@ -759,7 +759,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
     // ─── Periodic timers ────────────────────────────────────────────
     actx.timers.push(setInterval(checkKill, 30_000));
-    actx.timers.push(setInterval(() => void showActive(), 30_000));
+    actx.timers.push(setInterval(() => {
+      void showActive();
+      // Refresh status bar ad from current portfolio
+      try {
+        if (ad) statusBar.set({ kind: "ad", adText: ad.adText, clickUrl: ad.clickUrl });
+      } catch { /* best-effort */ }
+    }, 30_000));
     actx.timers.push(setInterval(() => void debugCtl?.reassertTick(), 60_000));
 
     // Tiered desync self-heal. The drift-only reasserts above can't see a
