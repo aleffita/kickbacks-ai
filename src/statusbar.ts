@@ -45,8 +45,9 @@ export class StatusBar {
   private _adIconUrl = "";
   private _marqueeOffset = 0;
   private _marqueeTimer: NodeJS.Timeout | null = null;
-  private static readonly MARQUEE_WIDTH = 35; // chars visible at once
-  private static readonly MARQUEE_MS = 250;    // ms per scroll step
+  /** Fixed width for the ad item so it never shifts other items. */
+  private static readonly AD_WIDTH = 40;
+  private static readonly MARQUEE_MS = 250;
 
   text = "";
 
@@ -126,9 +127,9 @@ export class StatusBar {
     this.adItem.show();
     // Start marquee scrolling for long text
     this._stopMarquee();
-    if (text.length > StatusBar.MARQUEE_WIDTH) {
+    if (text.length > StatusBar.AD_WIDTH) {
       this._marqueeTimer = setInterval(() => {
-        this._marqueeOffset = (this._marqueeOffset + 1) % (text.length + StatusBar.MARQUEE_WIDTH);
+        this._marqueeOffset++;
         this._paintAd();
       }, StatusBar.MARQUEE_MS);
     }
@@ -144,18 +145,22 @@ export class StatusBar {
   }
 
   private _paintAd(): void {
-    const text = this._adText;
-    if (text.length <= StatusBar.MARQUEE_WIDTH) {
-      this.adItem.text = `▸ ${this.escape(text)}`;
-      this.adItem.tooltip = `Open ${this._adClickUrl || text}`;
+    const text = this.escape(this._adText);
+    const w = StatusBar.AD_WIDTH;
+    if (text.length <= w) {
+      // Short text: left-align, pad right with spaces to fix width
+      this.adItem.text = text.padEnd(w, " ");
+      this.adItem.tooltip = `Open ${this._adClickUrl || this._adText}`;
       return;
     }
-    // Marquee: show a sliding window of text
-    const padded = text + "  ◆  " + text;
-    const start = this._marqueeOffset % (text.length + 4);
-    const slice = padded.slice(start, start + StatusBar.MARQUEE_WIDTH);
-    this.adItem.text = `▸ ${this.escape(slice)}`;
-    this.adItem.tooltip = `Open ${this._adClickUrl || text}\n${text}`;
+    // Marquee: slide a window of text inside the fixed-width slot.
+    // Pad with a gap marker so the scroll wraps cleanly.
+    const padded = text + "  ◆  " + text;   // ◆ separator
+    const maxStart = padded.length - w;
+    const start = this._marqueeOffset % (maxStart + 1);
+    const slice = padded.slice(start, start + w);
+    this.adItem.text = slice.padEnd(w, " ");
+    this.adItem.tooltip = `Open ${this._adClickUrl || this._adText}\n${this._adText}`;
   }
 
   private _stopMarquee(): void {
