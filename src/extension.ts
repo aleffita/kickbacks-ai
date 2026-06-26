@@ -698,10 +698,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       const _bannerNonce = { value: crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10)) };
       let _lastBannerId: string | null = null;
 
+      let _bannerPaintCount = 0;
       const paintBanner = () => {
         try {
+          _bannerPaintCount++;
           const bAd = wvResult.getBannerAd?.() ?? ad;
           if (!bAd) return;
+          if (_bannerPaintCount <= 5 || _bannerPaintCount % 30 === 0) {
+            dlog("ext", "banner.paint", { n: _bannerPaintCount,
+              adId: bAd.adId.slice(0,12), adText: bAd.adText.slice(0,30) });
+          }
           if (bAd.adId !== _lastBannerId) {
             _lastBannerId = bAd.adId;
             _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
