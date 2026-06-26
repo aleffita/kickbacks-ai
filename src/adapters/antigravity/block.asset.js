@@ -2,16 +2,6 @@
 (function () {
   "use strict";
 
-  // ── Debug ─────────────────────────────────────────────────────────
-  // console.log is visible in the Cascade panel's webview DevTools.
-  // Open via: Help → Toggle Developer Tools, or Cmd+Shift+I on the
-  // Cascade panel. Filter by "[Kickbacks]" to see our logs.
-  var DB = function () {
-    try { console.log("[Kickbacks]", Array.prototype.join.call(arguments, " ")); }
-    catch (e) {}
-  };
-  DB("block loading on", location.href);
-
   var TIER = __VIBE_ADS_TIER__;
   var AD = __VIBE_ADS_AD__;
   var ICON_REF = __VIBE_ADS_ICON__;
@@ -24,182 +14,135 @@
   var AD_ID = CORR.substring(0, CORR.lastIndexOf("."));
   var BASE = __VIBE_ADS_BASE__ || ("http://127.0.0.1:" + PORT + "/vibe-ads/" + LBTOKEN);
   var DEBUG = __VIBE_ADS_DEBUG__;
-  var VIEW_THRESHOLD_MS = __VIBE_ADS_VIEW_THRESHOLD_MS__;
 
-  DB("AD:", AD, "PORT:", PORT, "BASE:", BASE);
+  function DB() { try { console.log("[Kickbacks]", Array.prototype.join.call(arguments, " ")); } catch (e) {} }
+  DB("block.loading");
 
-  var _seq = 0;
-  function dlog(evt, data) {
-    if (!DEBUG) return;
-    try {
-      var o = { n: ++_seq, evt: evt, corr: CORR };
-      if (data) for (var k in data) o[k] = data[k];
-      fetch(BASE + "/log", { method: "POST", keepalive: true,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(o) }).catch(function () {});
-    } catch (e) {}
+  // ── Helpers ──────────────────────────────────────────────────────────
+  function newEventUuid() {
+    try { if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID(); } catch (e) {}
+    return "evt-" + Date.now() + "-" + Math.random();
   }
-
   function ping(kind) {
     try {
       var url = BASE + "/" + kind;
       if (navigator && typeof navigator.sendBeacon === "function") {
-        if (navigator.sendBeacon(url, new Blob([],
-          { type: "application/x-www-form-urlencoded" }))) return;
+        if (navigator.sendBeacon(url, new Blob([], { type: "application/x-www-form-urlencoded" }))) return;
       }
       fetch(url, { method: "POST", keepalive: true }).catch(function () {});
     } catch (e) {}
   }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
-  function newEventUuid() {
-    try {
-      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
-        return crypto.randomUUID();
-    } catch (e) {}
-    return "evt-" + Date.now() + "-" + Math.random();
-  }
+  // ── DOM Detection ───────────────────────────────────────────────────
+  // The Cascade panel renders each thinking step as:
+  //   <div class="flex flex-col gap-0.5">     ← step container
+  //     <div class="relative">                  ← header
+  //       <button><span class="text-secondary-foreground">Thinking for Xs</span></button>
+  //     </div>
+  //     <div class="px-2 py-1">...response...</div>  ← response
+  //   </div>
 
-  // ── Agent status text detection ───────────────────────────────────
-  // We look for textContent containing status keywords inside #react-app.
-  // The Cascade panel shows: "Working..." → "Thinking for Xs" → "Thought"
-
-  var STATUS_KEYWORDS = ["thinking", "working", "processing", "running",
-    "generating", "waiting", "analyzing", "executing task"];
-
-  function isAgentActive(text) {
+  function isActiveStep(text) {
     if (!text) return false;
-    var t = text.toLowerCase().trim();
-    if (t === "") return false;
-    for (var i = 0; i < STATUS_KEYWORDS.length; i++) {
-      if (t.indexOf(STATUS_KEYWORDS[i]) !== -1) return true;
-    }
-    return false;
+    var t = text.toLowerCase();
+    return t.indexOf("thinking") !== -1 || t.indexOf("working") !== -1;
   }
 
-  // Full-document scan (not just #react-app) in case the status is
-  // rendered outside the React root.
-  function findThinkingIndicator() {
-    // Strategy 1: look inside #react-app (the Cascade mount point)
-    var container = document.getElementById("react-app");
-    if (!container) {
-      DB("no #react-app yet");
-      // Strategy 2: fallback to full-document scan
-      container = document.body || document.documentElement;
-      if (!container) return null;
-    }
-    var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
-    var node;
-    while ((node = walker.nextNode())) {
-      var text = (node.textContent || "").trim();
-      if (text && isAgentActive(text)) {
-        var el = node.parentElement;
-        if (el && el.offsetParent !== null) {
-          DB("found thinking indicator:", text.slice(0, 60));
-          return el;
+  /** Find the active thinking step container.
+   *  Returns the flex container element, or null if agent is idle. */
+  function findActiveStep() {
+    // Look for <span class="text-secondary-foreground"> containing "Thinking"/"Working"
+    var spans = document.querySelectorAll('span.text-secondary-foreground');
+    for (var i = 0; i < spans.length; i++) {
+      var text = spans[i].textContent || "";
+      if (isActiveStep(text)) {
+        // Walk up to the flex container: span → button → div.relative → div.flex.flex-col
+        var step = spans[i].closest('div.flex');
+        if (step) {
+          DB("found active step:", text.trim().slice(0, 40));
+          return step;
+        }
+        // Fallback: parent traversal
+        var el = spans[i].parentElement;
+        for (var j = 0; j < 5 && el; j++) {
+          if (el.tagName === "DIV" && (el.className || "").indexOf("flex") !== -1) {
+            DB("found step via fallback:", text.trim().slice(0, 40));
+            return el;
+          }
+          el = el.parentElement;
         }
       }
-    }
-    // No match found — check if any visible text exists at all
-    if (container && container.textContent && container.textContent.trim()) {
-      // DB("container has text but no keyword match");
     }
     return null;
   }
 
-  // ── Overlay ────────────────────────────────────────────────────────
-
-  var _overlay = null;
+  // ── Ad Element ───────────────────────────────────────────────────────
+  var _adEl = null;
   var _active = false;
-  var _sig = "";
   var _sentRender = false;
-
-  function esc(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-    });
-  }
 
   function buildAdHtml() {
     var href = CLICKURL ? esc(CLICKURL) : "#";
     var fg = "var(--vscode-foreground,currentColor)";
-    return '<span style="display:flex;align-items:center;gap:6px;width:100%;' +
-      'box-sizing:border-box;padding:0 16px;white-space:nowrap;overflow:hidden">' +
-      '<span style="color:' + fg + ';font-size:11px;margin-right:6px">ad·</span>' +
-      '<a href="' + href + '" target="_blank" rel="noopener noreferrer" ' +
-      'data-vb-ad="1" style="color:' + fg + ';text-decoration:underline;' +
-      'overflow:hidden;white-space:nowrap">' + esc(AD) + '</a></span>';
+    var border = "var(--vscode-widget-border,#333)";
+    var bg = "var(--vscode-editor-background,#1e1e1e)";
+    return '<div data-vb-ad="1" style="display:flex;align-items:center;justify-content:space-between;' +
+      'padding:6px 12px;margin:2px 8px;border-radius:6px;border:1px solid ' + border + ';' +
+      'background:' + bg + ';font-size:12px;gap:8px">' +
+      '<span style="color:' + fg + ';opacity:0.7;white-space:nowrap">ad·</span>' +
+      '<a href="' + href + '" target="_blank" rel="noopener noreferrer" style="color:' + fg + ';' +
+      'text-decoration:underline;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;flex:1">' +
+      esc(AD) + '</a>' +
+      '<span style="color:' + fg + ';opacity:0.4;font-size:10px;white-space:nowrap;cursor:pointer" ' +
+      'onclick="this.parentElement.remove()">✕</span></div>';
   }
 
-  function placeOverlay(target) {
-    if (!_overlay) {
-      _overlay = document.createElement("div");
-      _overlay.setAttribute("data-vb", "1");
-      _overlay.style.cssText =
-        "position:fixed;z-index:2147483646;pointer-events:auto;" +
-        "display:flex;align-items:center;box-sizing:border-box;" +
-        "background:var(--vscode-editor-background,#1e1e1e);" +
-        "visibility:hidden;border:1px solid var(--vscode-widget-border,#444);" +
-        "border-radius:4px;padding:2px 0";
-      document.body.appendChild(_overlay);
-      DB("overlay element created");
-    }
-    var r = target.getBoundingClientRect();
-    if (r && (r.width > 0 || r.height > 0)) {
-      var key = r.left + "," + r.top + "," + r.width + "," + r.height;
-      if (key !== _sig) {
-        _sig = key;
-        _overlay.style.left = (r.left) + "px";
-        _overlay.style.top = (r.top + r.height + 4) + "px";
-        _overlay.style.minWidth = Math.min(r.width, 400) + "px";
-        _overlay.style.visibility = "visible";
-        _overlay.innerHTML = buildAdHtml();
-        DB("overlay placed at", key);
-      }
+  function insertAd(step) {
+    if (_adEl && _adEl.parentNode === step) return; // already inserted
+    removeAd();
+    var temp = document.createElement("div");
+    temp.innerHTML = buildAdHtml();
+    _adEl = temp.firstElementChild;
+    // Insert between the header (first child) and response (second child)
+    var header = step.children[0];
+    if (header && header.nextSibling) {
+      step.insertBefore(_adEl, header.nextSibling);
     } else {
-      DB("target has no layout rect");
+      step.appendChild(_adEl);
     }
+    DB("ad inserted");
+    if (!_sentRender) {
+      ping("impression_rendered?surface=overlay&ad=" + encodeURIComponent(AD)
+        + "&event_uuid=" + encodeURIComponent(newEventUuid()));
+      _sentRender = true;
+      DB("impression sent");
+    }
+    _active = true;
   }
 
-  function dropOverlay() {
-    if (_overlay && _overlay.parentNode)
-      _overlay.parentNode.removeChild(_overlay);
-    _overlay = null;
+  function removeAd() {
+    if (_adEl && _adEl.parentNode) {
+      _adEl.parentNode.removeChild(_adEl);
+      DB("ad removed");
+    }
+    _adEl = null;
     _active = false;
-    _sig = "";
-    _sentRender = false;
-    DB("overlay dropped");
   }
 
-  // ── Evaluation Loop ────────────────────────────────────────────────
-
-  var _noReactLogged = false;
-
+  // ── Evaluation ──────────────────────────────────────────────────────
   function evaluate() {
     try {
-      var indicator = findThinkingIndicator();
-      if (indicator) {
-        if (!_sentRender) {
-          ping("impression_rendered?surface=overlay&ad=" + encodeURIComponent(AD)
-            + "&event_uuid=" + encodeURIComponent(newEventUuid()));
-          _sentRender = true;
-          DB("impression_rendered sent");
-        }
-        placeOverlay(indicator);
-        _active = true;
-      } else {
-        if (_active) {
-          DB("agent went idle, dropping overlay");
-          if (_overlay) dropOverlay();
-          _active = false;
-        }
+      var step = findActiveStep();
+      if (step) {
+        insertAd(step);
+      } else if (_active) {
+        removeAd();
       }
-    } catch (e) {
-      DB("evaluate error:", e.message);
-    }
+    } catch (e) { DB("error:", e.message); }
   }
 
-  // ── Ad rotation poll ──────────────────────────────────────────────
-
+  // ── Poll Ad Rotation ────────────────────────────────────────────────
   function pollAd() {
     try {
       fetch(BASE + "/ad").then(function (r) { return r.json(); })
@@ -209,46 +152,44 @@
             DB("ad rotated:", j.adText);
             AD = j.adText;
             CLICKURL = j.clickUrl || "";
-            _sig = "";
             _sentRender = false;
+            if (_adEl) { removeAd(); }
           }
         }).catch(function () {});
     } catch (e) {}
   }
 
-  // ── Start ──────────────────────────────────────────────────────────
-
+  // ── Start ────────────────────────────────────────────────────────────
   DB("block.start");
 
-  // MutationObserver on #react-app (or body as fallback)
-  var appContainer = document.getElementById("react-app") || document.body;
-  if (appContainer) {
-    var observer = new MutationObserver(function () { evaluate(); });
-    observer.observe(appContainer, {
-      childList: true, subtree: true, characterData: true
-    });
-    DB("observer attached to", appContainer.id || appContainer.tagName);
-  } else {
-    DB("no container for observer");
+  // Observe the entire document for new step containers
+  var observer = new MutationObserver(function () { evaluate(); });
+  var target = document.body || document.documentElement;
+  if (target) {
+    observer.observe(target, { childList: true, subtree: true, characterData: true });
+    DB("observer attached");
   }
 
-  setInterval(evaluate, 500);
+  setInterval(evaluate, 250);
   setInterval(pollAd, 10000);
   setTimeout(pollAd, 5000);
   setTimeout(evaluate, 100);
   setTimeout(evaluate, 1000);
   setTimeout(evaluate, 3000);
 
-  // Frame-based position refresh (keeps overlay glued to element)
+  // Keep ad glued even during re-renders
   function frame() {
-    if (_active && _overlay) {
-      var ind = findThinkingIndicator();
-      if (ind) placeOverlay(ind);
-    }
+    if (!_active) { requestAnimationFrame(frame); return; }
+    try {
+      var step = findActiveStep();
+      if (step && (!_adEl || _adEl.parentNode !== step)) {
+        insertAd(step);
+      }
+    } catch (e) { DB("frame error:", e.message); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 
-  DB("block fully loaded");
+  DB("block.ready");
 })();
 /* VIBE-ADS-END */
