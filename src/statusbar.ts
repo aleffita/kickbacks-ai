@@ -13,6 +13,7 @@ export type SbState =
 
 const GREEN = "#2ea043";
 const RED = "#f85149";
+const AD_COLOR = "#dba110"; // amber/gold — distinct from earnings green
 
 /**
  * Activity-aware status bar with TWO items:
@@ -41,6 +42,11 @@ export class StatusBar {
   // Active ad info
   private _adText = "";
   private _adClickUrl = "";
+  private _adIconUrl = "";
+  private _marqueeOffset = 0;
+  private _marqueeTimer: NodeJS.Timeout | null = null;
+  private static readonly MARQUEE_WIDTH = 35; // chars visible at once
+  private static readonly MARQUEE_MS = 250;    // ms per scroll step
 
   text = "";
 
@@ -109,23 +115,53 @@ export class StatusBar {
   }
 
   /** Show or update the ad item alongside the earnings. */
-  setAd(text: string, clickUrl: string): void {
+  setAd(text: string, clickUrl: string, iconUrl?: string): void {
     this._adText = text;
     this._adClickUrl = clickUrl;
-    // Truncate long ads to prevent status bar overflow
-    const maxLen = 40;
-    const displayText = text.length > maxLen ? text.slice(0, maxLen - 1) + "…" : text;
-    this.adItem.text = `✦ ad· ${this.escape(displayText)}`;
-    this.adItem.tooltip = `Open ${clickUrl || text}`;
-    this.adItem.color = GREEN;
+    this._adIconUrl = iconUrl || "";
+    this._marqueeOffset = 0;
+    this._paintAd();
+    this.adItem.color = AD_COLOR;
     this.adItem.show();
+    // Start marquee scrolling for long text
+    this._stopMarquee();
+    if (text.length > StatusBar.MARQUEE_WIDTH) {
+      this._marqueeTimer = setInterval(() => {
+        this._marqueeOffset = (this._marqueeOffset + 1) % (text.length + StatusBar.MARQUEE_WIDTH);
+        this._paintAd();
+      }, StatusBar.MARQUEE_MS);
+    }
   }
 
   /** Hide the ad item. */
   hideAd(): void {
+    this._stopMarquee();
     this.adItem.hide();
     this._adText = "";
     this._adClickUrl = "";
+    this._adIconUrl = "";
+  }
+
+  private _paintAd(): void {
+    const text = this._adText;
+    if (text.length <= StatusBar.MARQUEE_WIDTH) {
+      this.adItem.text = `▸ ${this.escape(text)}`;
+      this.adItem.tooltip = `Open ${this._adClickUrl || text}`;
+      return;
+    }
+    // Marquee: show a sliding window of text
+    const padded = text + "  ◆  " + text;
+    const start = this._marqueeOffset % (text.length + 4);
+    const slice = padded.slice(start, start + StatusBar.MARQUEE_WIDTH);
+    this.adItem.text = `▸ ${this.escape(slice)}`;
+    this.adItem.tooltip = `Open ${this._adClickUrl || text}\n${text}`;
+  }
+
+  private _stopMarquee(): void {
+    if (this._marqueeTimer) {
+      clearInterval(this._marqueeTimer);
+      this._marqueeTimer = null;
+    }
   }
 
   private escape(s: string): string {

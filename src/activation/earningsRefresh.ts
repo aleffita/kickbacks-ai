@@ -38,7 +38,7 @@ export function setupEarningsRefresh(
   signals: FleetSignals | null = null,
   // Optional ad reference: when set, the status bar also shows the ad text
   // alongside the earnings. The ad updates via portfolio refresh.
-  adRef?: { current: { adText: string; clickUrl?: string } | null },
+  adRef?: { current: { adText: string; clickUrl?: string; iconUrl?: string } | null },
 ): EarningsRefreshResult {
   let lastUsd: string | undefined;
   let lastToday: string | undefined;

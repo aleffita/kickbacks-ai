@@ -459,7 +459,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       capWarning, fleetSignals,
       { get current() { return _adGetter(); } });
     // Wire the real getter once `ad` is available (below)
-    _adGetter = () => ad ? { adText: ad.adText, clickUrl: ad.clickUrl } : null;
+    _adGetter = () => ad ? { adText: ad.adText, clickUrl: ad.clickUrl, iconUrl: ad.iconUrl } : null;
 
     // ─── Portfolio ──────────────────────────────────────────────────
     // Signed in → the real, user-crediting portfolio. Signed out (incl. a
@@ -473,6 +473,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       portfolio, auth, ccVersion);
     let ad = portfolioResp?.ad ?? null;
     let viewThresholdMs = portfolioResp?.viewThresholdMs ?? 3000;
+    // Show ad in status bar immediately after portfolio resolves
+    void showActive();
     session.set({ hasAd: !!ad });
 
     // Lazy portfolio resolve for the debug closure.
@@ -841,6 +843,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               ad = r.ad;
               session.set({ hasAd: true });
               debugCtl.setPortfolioAd(r.ad.adText, r.ad.clickUrl || "");
+              void showActive();
             }
           }
           if (adRef.current && actx === retryActx) {
