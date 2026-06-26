@@ -692,38 +692,46 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }
 
     // ─── Banner surface (status bar) ────────────────────────────────
-    // Uses its OWN slot in the ad queue (adQueue[(rotationIdx+1)%len])
-    // so it never shows/bills the same ad as the overlay. 10s poll.
+    // Uses the SAME loopback /ad endpoint as the overlay, polled at 10s.
+    // No separate adQueue/rotationIdx — whatever the loopback returns is
+    // the current ad (updated by refreshPortfolio every 60s).
     {
       const _bannerNonce = { value: crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10)) };
       let _lastBannerId: string | null = null;
+      let _bannerFetchCount = 0;
 
-      let _bannerPaintCount = 0;
-      const paintBanner = () => {
+      const fetchBannerAd = () => {
         try {
-          _bannerPaintCount++;
-          const bAd = wvResult.getBannerAd?.() ?? ad;
-          if (!bAd) return;
-          if (_bannerPaintCount <= 5 || _bannerPaintCount % 30 === 0) {
-            dlog("ext", "banner.paint", { n: _bannerPaintCount,
-              adId: bAd.adId.slice(0,12), adText: bAd.adText.slice(0,30) });
-          }
-          if (bAd.adId !== _lastBannerId) {
-            _lastBannerId = bAd.adId;
-            _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
-            metrics.send("impression_rendered", { adId: bAd.adId, campaignId: bAd.campaignId,
-              ccVersion, corr: bAd.adId + "." + Math.random().toString(36).slice(2, 8),
-              sessionToken: bAd.sessionToken, surface: "banner",
-              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
-            metrics.send("impression_viewable", { adId: bAd.adId, campaignId: bAd.campaignId,
-              ccVersion, corr: bAd.adId + "." + Math.random().toString(36).slice(2, 8),
-              sessionToken: bAd.sessionToken, surface: "banner",
-              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
-          }
-          statusBar.set({ kind: "ad", adText: bAd.adText, clickUrl: bAd.clickUrl });
+          const loopbase = wvResult.lbInfo?.base;
+          if (!loopbase) return;
+          _bannerFetchCount++;
+          fetch(loopbase + "/ad").then(r => r.json()).then(j => {
+            if (!j || !j.adText) return;
+            if (!j.adId && !j.adText) return;
+            const id = j.adId || j.adText;
+            const text = j.adText;
+            const url = j.clickUrl || "";
+            if (_bannerFetchCount <= 5 || _bannerFetchCount % 30 === 0) {
+              dlog("ext", "banner.fetch", { n: _bannerFetchCount, adId: String(id).slice(0,12),
+                adText: String(text).slice(0,30) });
+            }
+            if (id !== _lastBannerId) {
+              _lastBannerId = id;
+              _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
+              metrics.send("impression_rendered", { adId: id, campaignId: "",
+                ccVersion, corr: id + "." + Math.random().toString(36).slice(2, 8),
+                sessionToken: "", surface: "banner",
+                eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
+              metrics.send("impression_viewable", { adId: id, campaignId: "",
+                ccVersion, corr: id + "." + Math.random().toString(36).slice(2, 8),
+                sessionToken: "", surface: "banner",
+                eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
+            }
+            statusBar.set({ kind: "ad", adText: text, clickUrl: url });
+          }).catch(() => {});
         } catch { /* best-effort */ }
       };
-      // Wire onTick — always bills the CURRENT banner ad's nonce
+      // Wire onTick — reads from the mutable NONCE, banner fetches update it
       (statusBar as StatusBar).onTick = () => {
         try {
           const bAd = wvResult.getBannerAd?.() ?? ad;
@@ -735,9 +743,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()) });
         } catch { /* best-effort */ }
       };
-      // Initial paint + 10s poll (matching the overlay's pollAd interval)
-      paintBanner();
-      actx.timers.push(setInterval(paintBanner, 10_000));
+      // Initial fetch + 10s poll (same as overlay's pollAd)
+      fetchBannerAd();
+      actx.timers.push(setInterval(fetchBannerAd, 10_000));
     }
 
     if (ad && override?.killed !== true && webviewMode() === "off") {
