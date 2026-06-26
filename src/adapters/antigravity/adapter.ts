@@ -66,7 +66,10 @@ export class AntigravityAdapter implements TargetAdapter {
   private readonly CSP_CONNECT = "connect-src http://127.0.0.1:* http://localhost:*";
 
   /** Add a CSP meta tag to cascade-panel.html so the injected block can
-   *  reach the loopback. Idempotent; reversible via restoreCsp. */
+   *  reach the loopback. IMPORTANT: we ONLY add connect-src, never
+   *  default-src or script-src — VS Code already sets those for the
+   *  webview, and overriding them would break the entire Cascade panel.
+   *  Idempotent; reversible via restoreCsp. */
   private patchCspWithReason(): { ok: boolean; reason?: string } {
     try {
       const html = this.cascadePanelHtmlPath();
@@ -75,7 +78,9 @@ export class AntigravityAdapter implements TargetAdapter {
       if (src.includes(this.CSP_MARK)) return { ok: true, reason: "already" };
       const bak = this.cspBackupPath();
       if (!existsSync(bak)) writeFileSync(bak, src);
-      const cspTag = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; ${this.CSP_CONNECT};" data-kickbacks="${this.CSP_MARK}">\n`;
+      // Add ONLY connect-src — do NOT touch default-src (that's managed by
+      // VS Code's webview runtime and must not be overridden).
+      const cspTag = `<meta http-equiv="Content-Security-Policy" content="${this.CSP_CONNECT};" data-kickbacks="${this.CSP_MARK}">\n`;
       const headEnd = src.indexOf("</head>");
       if (headEnd !== -1) {
         src = src.slice(0, headEnd) + "  " + cspTag + src.slice(headEnd);
