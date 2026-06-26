@@ -473,9 +473,46 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       portfolio, auth, ccVersion);
     let ad = portfolioResp?.ad ?? null;
     let viewThresholdMs = portfolioResp?.viewThresholdMs ?? 3000;
-    // Paint ad in status bar immediately (independent of showActive flow)
+    // Paint ad in status bar and start a SEPARATE session for it.
+    // The status bar ad uses surface="statusline" with its OWN session_nonce,
+    // completely independent from the webview overlay or banner surfaces.
     if (ad) {
       statusBar.set({ kind: "ad", adText: ad.adText, clickUrl: ad.clickUrl });
+      // Fire initial impression events for this statusline surface
+      // (independent session from the webview overlay)
+      const ssNonce = crypto.randomUUID?.() ?? ("ss-" + Math.random().toString(36).slice(2));
+      const ssEuid = crypto.randomUUID?.() ?? ("evt-" + Date.now() + "-" + Math.random());
+      metrics.send("impression_rendered", {
+        adId: ad.adId, campaignId: ad.campaignId,
+        ccVersion, corr: ad.adId + "." + Math.random().toString(36).slice(2, 8),
+        sessionToken: ad.sessionToken,
+        surface: "statusline",
+        eventUuid: ssEuid,
+        sessionNonce: ssNonce,
+      });
+      metrics.send("impression_viewable", {
+        adId: ad.adId, campaignId: ad.campaignId,
+        ccVersion, corr: ad.adId + "." + Math.random().toString(36).slice(2, 8),
+        sessionToken: ad.sessionToken,
+        surface: "statusline",
+        eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()),
+        sessionNonce: ssNonce,
+      });
+      // Wire onTick to send view_tick for the statusline surface
+      // (independent session, Hermes-style decay handled by StatusBar)
+      (statusBar as StatusBar).onTick = (intervalMs: number) => {
+        try {
+          metrics.send("view_tick", {
+            adId: ad!.adId, campaignId: ad!.campaignId,
+            ccVersion, corr: ad!.adId + "." + Math.random().toString(36).slice(2, 8),
+            sessionToken: ad!.sessionToken,
+            surface: "statusline",
+            visibleMs: intervalMs,
+            sessionNonce: ssNonce,
+            eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()),
+          });
+        } catch { /* best-effort */ }
+      };
     }
     void showActive();
     session.set({ hasAd: !!ad });
