@@ -697,6 +697,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // the current ad (updated by refreshPortfolio every 60s).
     {
       const _bannerNonce = { value: crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10)) };
+      let _bannerVisibleMs = 0;
       let _lastBannerId: string | null = null;
       let _lastBannerText = "";
       let _lastBannerUrl = "";
@@ -725,6 +726,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               _lastBannerId = j.adId || null;
               _lastBannerText = txt;
               _lastBannerUrl = url;
+              _bannerVisibleMs = 0; // new ad session → reset accumulated time
               _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
               metrics.send("impression_rendered", { adId: id, campaignId: "",
                 ccVersion, corr: id + "." + Math.random().toString(36).slice(2, 8),
@@ -741,15 +743,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           }).catch((e) => { dlog("ext", "banner.fetch_error", { msg: String(e).slice(0,80) }); });
         } catch (e) { dlog("ext", "banner.fetch_crash", { msg: String(e).slice(0,80) }); }
       };
-      // Wire onTick — reads from the mutable NONCE, banner fetches update it
-      (statusBar as StatusBar).onTick = () => {
+      // Wire onTick — StatusBar calls it with the current tick interval.
+      // visibleMs is cumulative (same as overlay's view_tick model).
+      (statusBar as StatusBar).onTick = (intervalMs: number) => {
         try {
           const bAd = wvResult.getBannerAd?.() ?? ad;
           if (!bAd) return;
+          _bannerVisibleMs += intervalMs;
           metrics.send("view_tick", { adId: bAd.adId, campaignId: bAd.campaignId,
             ccVersion, corr: bAd.adId + "." + Math.random().toString(36).slice(2, 8),
             sessionToken: bAd.sessionToken, surface: "banner",
-            visibleMs: 5000, sessionNonce: _bannerNonce.value,
+            visibleMs: _bannerVisibleMs, sessionNonce: _bannerNonce.value,
             eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()) });
         } catch { /* best-effort */ }
       };

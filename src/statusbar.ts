@@ -62,14 +62,12 @@ export class StatusBar {
     this.startTicking();
   }
 
-  /** Track user activity by listening to editor selection changes.
-   *  Resets the idle timer on any activity. */
+  /** Track user activity — resets the idle timer on any of these signals. */
   private startActivityTracking(): void {
-    try {
-      vscode.window.onDidChangeTextEditorSelection(() => {
-        this.lastActivityMs = Date.now();
-      });
-    } catch { /* best-effort */ }
+    const reset = () => { this.lastActivityMs = Date.now(); };
+    try { vscode.window.onDidChangeTextEditorSelection(reset); } catch {}
+    try { vscode.window.onDidChangeActiveTextEditor(reset); } catch {}
+    try { vscode.window.onDidChangeWindowState((e) => { if (e.focused) reset(); }); } catch {}
   }
 
   /** Billing tick loop with Hermes-style decay. Every 5s we check idle
