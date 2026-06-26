@@ -149,12 +149,12 @@ export class StatusBar {
       return;
     }
     const gap = "   >>   ";
-    const content = raw;
-    const padded = prefix + content + gap + prefix + content;
-    const maxStart = Math.max(0, padded.length - w);
+    const availW = w - prefix.length;
+    const padded = raw + gap + raw;
+    const maxStart = Math.max(0, padded.length - availW);
     const start = this._marqueeOffset % (maxStart + 1);
-    const slice = padded.slice(start, start + w);
-    this.adItem.text = this.escape(slice).padEnd(w, " ");
+    const slice = padded.slice(start, start + availW);
+    this.adItem.text = prefix + this.escape(slice).padEnd(availW, " ");
     this.adItem.tooltip = `Open ${this._adClickUrl || raw}\n${raw}`;
   }
 
