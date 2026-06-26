@@ -7,6 +7,7 @@ import type { AuthClient } from "../auth/client";
 import type { SessionState } from "../sessionState";
 import { canPatch, servingVerdict } from "../servingGate";
 import { dlog } from "../log";
+import { errMsg } from "../util/errMsg";
 
 export interface AdRotationDeps {
   adapter: TargetAdapter;
@@ -131,7 +132,7 @@ async function refreshPortfolio(
         { epoch, current: state.refreshEpoch });
       return;
     }
-    if (!r || r.ads.length === 0) return;
+    if (!r || r.ads.length === 0) { dlog("ext", "portfolio.refresh_empty", { got: !!r, len: r?.ads?.length ?? -1 }); return; }
     const newSig = r.ads.map(a => a.adId).sort().join(",");
     const adsChanged = force || newSig !== state.lastAdSetSig;
     if (adsChanged) {
@@ -189,7 +190,9 @@ async function refreshPortfolio(
       dlog("ext", "portfolio.token_refreshed",
         { queueLen: r.ads.length, rotationIdx: state.rotationIdx, adId: active?.adId });
     }
-  } catch { /* prime directive */ }
+  } catch (e) {
+    dlog("ext", "portfolio.refresh_error", { msg: errMsg(e) });
+  }
 }
 
 /** Sign-out teardown: drop every leftover REAL ad so no surface keeps serving
