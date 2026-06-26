@@ -858,6 +858,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     registerCommands(ctx, adapter, codexAdapter, auth, debugCtl, statusBar,
       session, updater, ccVersion, showActive);
 
+    // ─── Status bar ad click command ─────────────────────────────────
+    // Opens the current ad's URL in the default browser. The ad URL is
+    // updated by statusBar.setAd() whenever a new ad is shown.
+    ctx.subscriptions.push(
+      vscode.commands.registerCommand("kickbacks.openAdUrl", async () => {
+        try {
+          const sb = statusBar as StatusBar;
+          const url = sb.adClickUrl;
+          if (url) await vscode.env.openExternal(vscode.Uri.parse(url));
+        } catch { /* best-effort */ }
+      }));
+
     // ─── E2E test hooks ─────────────────────────────────────────────
     if (testHooksEnabled()) {
       testHooks.registerCommands(ctx);

@@ -198,7 +198,7 @@ export function setupStatusBarAd(deps: StatusBarAdDeps): void {
           // Paint FIRST: a false return means the needs-reload lock owns the
           // bar and the ad was never displayed — don't start the show and
           // never bill (no impression_rendered, no view_tick). Audit #29.
-          if (statusBar.set({ kind: "ad", adText: ad!.adText }) === false) {
+          if (statusBar.set({ kind: "ad", adText: ad!.adText, clickUrl: ad!.clickUrl }) === false) {
             return;
           }
           showing = true;
@@ -233,7 +233,7 @@ export function setupStatusBarAd(deps: StatusBarAdDeps): void {
           // view_tick fires, a visible ad was repainted within the last ~1s.
           // A suppressed repaint (needs-reload lock engaged mid-show) means
           // the ad is no longer visible — end the show so billing stops.
-          if (statusBar.set({ kind: "ad", adText: shownAd!.adText }) === false) {
+          if (statusBar.set({ kind: "ad", adText: shownAd!.adText, clickUrl: shownAd!.clickUrl }) === false) {
             endShow();
           }
         }

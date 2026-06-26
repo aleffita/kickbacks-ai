@@ -10,10 +10,7 @@ try {
   var target = document.body || document.documentElement;
   if (target) {
     target.insertBefore(KBPROOF, target.firstChild);
-    // Remove after 10s
-    setTimeout(function() {
-      try { if (KBPROOF.parentNode) KBPROOF.parentNode.removeChild(KBPROOF); } catch(e) {}
-    }, 10000);
+    // Banner fica até você clicar pra fechar (não remove automático)
   }
 
   // Also change the document title
