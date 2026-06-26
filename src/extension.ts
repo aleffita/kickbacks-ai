@@ -656,41 +656,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     };
     await bringUpServing();
 
-    // ─── Antigravity IDE patch ────────────────────────────────────
-    // Patch the Cascade panel's jetskiAgent bundle IMMEDIATELY after
-    // serving bring-up, regardless of ad availability. The visual block
-    // runs in the webview and will self-activate when it finds the
-    // thinking indicator. We apply synchronously (no delay) so the file
-    // is patched before any Cascade panel webview loads.
-    if (antigravityAdapter && canPatch() && webviewMode() === "on") {
-      try {
-        const apf = antigravityAdapter.preflight();
-        if (apf.compatible) {
-          // Always inject the block, even without an ad. The block
-          // connects to the loopback and updates via pollAd() once an
-          // ad becomes available. Use a placeholder when no ad yet.
-          const ap: PatchParams = {
-            tier: 3,
-            adText: ad?.adText || "Kickbacks",
-            iconRef: ad?.iconRef || "custom",
-            iconUrl: ad?.iconUrl || "",
-            clickToken: "ck",
-            clickUrl: ad?.clickUrl || "",
-            corr: (ad?.adId || "no-ad") + "." + Math.random().toString(36).slice(2, 8),
-            loopbackPort: wvResult.lbInfo?.port || 0,
-            loopbackToken: "",
-            loopbackBase: wvResult.lbInfo?.base || "",
-            debug: debugEnabled(),
-            viewThresholdMs,
-          };
-          const ar = antigravityAdapter.applyPatch(ap);
-          dlog("ext", "antigravity.applyPatch", { ok: ar.ok, reason: ar.reason });
-        }
-      } catch (e) {
-        dlog("ext", "antigravity.error", { msg: errMsg(e) });
-      }
-    }
-
     // ─── Banner surface (status bar) ────────────────────────────────
     // Uses the SAME loopback /ad endpoint as the overlay, polled at 10s.
     // No separate adQueue/rotationIdx — whatever the loopback returns is
