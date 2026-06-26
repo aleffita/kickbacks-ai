@@ -82,6 +82,9 @@ copyAsset("src/adapters/claude-cli/statusline.asset.mjs",
 // The Codex thinking-shimmer injection is a shipped raw asset (NOT bundled).
 copyAsset("src/adapters/codex/block.asset.js",
           "dist/adapters/codex/block.asset.js");
+// The Antigravity jetskiAgent injection is a shipped raw asset (NOT bundled).
+copyAsset("src/adapters/antigravity/block.asset.js",
+          "dist/adapters/antigravity/block.asset.js");
 // Codex CLI wrapper templates (Windows .cmd + POSIX shell). Shipped raw.
 copyAsset("src/adapters/codex-cli/wrapper.cmd.asset",
           "dist/adapters/codex-cli/wrapper.cmd.asset");

@@ -4,6 +4,7 @@ import { readdirSync, existsSync } from "node:fs";
 import type { TargetAdapter } from "./types";
 import { ClaudeCodeAdapter } from "./claude-code/adapter";
 import { CodexAdapter } from "./codex/adapter";
+import { AntigravityAdapter } from "./antigravity/adapter";
 import { compareClaudeCodeInstall } from "../util/claudeCodeVersion";
 
 // Same host roots locate.ts scans for Claude Code (keep the lists in sync):
@@ -93,6 +94,25 @@ export const REGISTRY: TargetEntry[] = [
       return newestCodexChunk();
     },
     make: (t) => new CodexAdapter(t),
+  },
+  {
+    id: "antigravity",
+    locate: () => {
+      const ev = envTarget("KICKBACKS_ANTIGRAVITY_TARGET")
+        ?? envTarget("VIBE_ADS_ANTIGRAVITY_TARGET");
+      if (ev !== undefined) return ev;
+      // Hardcoded path to the jetskiAgent bundle in the Antigravity IDE app
+      try {
+        const p = "/Applications/Antigravity IDE.app/Contents/Resources/app/out/jetskiAgent/main.js";
+        if (existsSync(p)) return p;
+        // Fallback: search common locations
+        const home = homedir();
+        const alt = join(home, ".antigravity-ide", "app", "out", "jetskiAgent", "main.js");
+        if (existsSync(alt)) return alt;
+      } catch { /* ignore */ }
+      return null;
+    },
+    make: (t) => new AntigravityAdapter(t),
   },
 ];
 
