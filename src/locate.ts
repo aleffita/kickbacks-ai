@@ -44,6 +44,19 @@ export function locateClaudeCode(): string | null {
   return null;
 }
 
+/** Locate the Antigravity IDE jetskiAgent main.js target. Checks the standard
+ *  app bundle path and supports an env override for testing. Never throws. */
+export function locateAntigravity(): string | null {
+  const explicit = process.env.KICKBACKS_ANTIGRAVITY_TARGET
+    || process.env.VIBE_ADS_ANTIGRAVITY_TARGET;
+  if (explicit && existsSync(explicit)) return explicit;
+  try {
+    const p = "/Applications/Antigravity IDE.app/Contents/Resources/app/out/jetskiAgent/main.js";
+    if (existsSync(p)) return p;
+  } catch { /* ignore */ }
+  return null;
+}
+
 /** Best-effort `entrypoint` tag of a session transcript: "claude-vscode" for
  *  the interactive VS Code panel, "cli" for terminal sessions. Reads the head
  *  of the file and returns the first record's top-level `entrypoint` string,

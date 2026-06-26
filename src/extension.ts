@@ -2,9 +2,10 @@ import * as vscode from "vscode";
 import { homedir, release } from "node:os";
 import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
-import { locateClaudeCode, locateClaudeCodeLog, locateClaudeCliLog } from "./locate";
+import { locateClaudeCode, locateClaudeCodeLog, locateClaudeCliLog, locateAntigravity } from "./locate";
 import { ClaudeCodeAdapter } from "./adapters/claude-code/adapter";
 import { CodexAdapter } from "./adapters/codex/adapter";
+import { AntigravityAdapter } from "./adapters/antigravity/adapter";
 import { ClaudeCliStatuslineAdapter } from "./adapters/claude-cli/adapter";
 import { locateCodexTarget } from "./adapters/registry";
 import type { TargetAdapter, PatchParams } from "./adapters/types";
@@ -147,6 +148,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             })()
           : null);
     const codexAdapter = actx.codexAdapter;
+
+    // Resolve the Antigravity IDE target (jetskiAgent). Always additive:
+    // patches the Cascade webview alongside the Claude Code panel. Never
+    // blocks CC activation.
+    actx.antigravityAdapter = (() => {
+      try {
+        const t = locateAntigravity();
+        return t ? new AntigravityAdapter(t) : null;
+      } catch { return null; }
+    })();
+    const antigravityAdapter = actx.antigravityAdapter;
+    const antigravityPf = (() => {
+      try { return antigravityAdapter?.preflight() ?? null; } catch { return null; }
+    })();
+    const antigravityOk = antigravityPf?.compatible === true;
+
     // Single guarded Codex preflight, shared by the activation gate, the
     // bootCanary auto-enable widening, and the ccVersion label below.
     const codexPf = (() => {
@@ -322,13 +339,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // Boot canary. `anyTargetCompatible` widens the clean-boot auto-enable
     // to Codex-only machines (their K_ON would otherwise never persist).
     const { firstRun } = await setupBootCanary(adapter, debugCtl, ctx,
-      claudeOk || codexOk);
+      claudeOk || codexOk || antigravityOk);
 
     dlog("ext", "preflight",
       { compatible: pf.compatible, version: pf.version, reason: pf.reason,
         codexCompatible: codexOk, codexVersion: codexPf?.version ?? null,
-        codexFallback: codexDiscovery && !codexEnabled() });
-    if (!claudeOk && !codexOk) {
+        codexFallback: codexDiscovery && !codexEnabled(),
+        antigravityCompatible: antigravityOk });
+    if (!claudeOk && !codexOk && !antigravityOk) {
       statusBar.set({ kind: "incompatible", version: pf.version ?? "unknown" });
       notifyIncompatible(ctx, adapter, pf);
       // Audit #22: this early return used to strand a previously-patched
@@ -868,6 +886,9 @@ export async function deactivate(): Promise<void> {
         if (ct) new CodexAdapter(ct).restore({ keepCsp: true });
       }
     } catch { /* ignore */ }
+    try {
+      if (actx.antigravityAdapter) actx.antigravityAdapter.restore();
+    } catch { /* ignore */ }
   }
   // Loopback stops LAST, each time-bounded so deactivate always completes.
   if (actx.loopback) { await boundedStop(actx.loopback.stop()); actx.loopback = null; }
@@ -876,5 +897,6 @@ export async function deactivate(): Promise<void> {
   actx.codexCliStatus = null;
   actx.ccAdapter = null;
   actx.codexAdapter = null;
+  actx.antigravityAdapter = null;
   override = null;
 }
