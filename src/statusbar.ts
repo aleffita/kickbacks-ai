@@ -142,15 +142,15 @@ export class StatusBar {
     const raw = this._adText;
     const text = this.escape(raw);
     const w = StatusBar.AD_WIDTH;
-    const prefix = "$(megaphone) ";
+    const prefix = "$(megaphone) ";  // codicon — NÃO escapar o $
     if (raw.length <= w - prefix.length) {
       this.adItem.text = prefix + text.padEnd(w - prefix.length, " ");
       this.adItem.tooltip = `Open ${this._adClickUrl || raw}`;
       return;
     }
     const gap = "   >>   ";
-    const content = prefix + raw;
-    const padded = content + gap + content;
+    const content = raw;
+    const padded = prefix + content + gap + prefix + content;
     const maxStart = Math.max(0, padded.length - w);
     const start = this._marqueeOffset % (maxStart + 1);
     const slice = padded.slice(start, start + w);
@@ -165,8 +165,10 @@ export class StatusBar {
     }
   }
 
+  /** Escape $ for status bar text, but preserve $(codicon) syntax. */
   private escape(s: string): string {
-    return s.replace(/\$/g, "\\$");
+    // $ seguido de ( = codicon, não escapar. Qualquer outro $ escapa.
+    return s.replace(/\$(?!\()/g, "\\$");
   }
 
   get adClickUrl(): string { return this._adClickUrl; }
