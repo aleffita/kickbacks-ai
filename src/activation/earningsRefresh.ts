@@ -135,12 +135,13 @@ export function setupEarningsRefresh(
                     usd: lastUsd, usdToday: lastToday });
     // Also show the ad in the status bar if available (standalone surface,
     // independent of webview patches). The ad is a second status bar item.
+    // Banner ad is managed by its own 10s fetch loop in extension.ts,
+    // NOT by adRef (which belongs to the overlay's rotation system).
+    // Don't touch the banner here — it persists independently.
     try {
       const cur = adRef?.current;
       if (cur?.adText) {
         (statusBar as any).setAd?.(cur.adText, cur.clickUrl || "");
-      } else {
-        (statusBar as any).hideAd?.();
       }
     } catch { /* best-effort */ }
   };
