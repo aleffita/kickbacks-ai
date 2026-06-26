@@ -13,15 +13,17 @@ export type SbState =
 
 const GREEN = "#2ea043";
 const RED = "#f85149";
-const AD_COLOR = "#dba110"; // amber/gold — distinct from earnings green
+const AD_COLOR = "#dba110";         // amber — billando normalmente
+const AD_PAUSED = "#88888866";      // cinza — billing pausado (janela sem foco / dúvida)
 
 /**
  * Activity-aware status bar with TWO items:
- *   [Kickbacks ($X today · $Y)]  [✦  ad· Text... [✕]]
+ *   [Kickbacks ($X today · $Y)]  [$(megaphone) ad· Text...]
  *
- * Left item → debug menu (existing). Right item → opens ad URL.
- * Billing decay: sends view_tick less frequently during idle periods,
- * stops after 5 min AFK (Hermes-style).
+ * Billing architecture (two-level):
+ *   Mestre → window.onDidChangeWindowState: perdeu foco → corta IMEDIATAMENTE
+ *   Contador → 5min sem nenhum evento mesmo com foco → "dúvida" → corta
+ *   Qualquer evento → reseta contador → volta a billar
  */
 export class StatusBar {
   // Ad item (priority 1000 = right-most, ad visible first)
@@ -31,21 +33,18 @@ export class StatusBar {
   private item = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right, 999);
 
-  // ── Activity tracking ──────────────────────────────────────────────
+  // ── Billing state ─────────────────────────────────────────────────
+  private _windowFocused = true;    // mestre: VS Code tem foco do SO
   private lastActivityMs = Date.now();
   private tickInterval: NodeJS.Timeout | null = null;
-  private tickCount = 0;
   private _onTick: ((intervalMs: number) => void) | null = null;
-  /** Called on every billing tick with the current interval. */
   set onTick(fn: ((intervalMs: number) => void) | null) { this._onTick = fn; }
 
   // Active ad info
   private _adText = "";
   private _adClickUrl = "";
-  private _adIconUrl = "";
   private _marqueeOffset = 0;
   private _marqueeTimer: NodeJS.Timeout | null = null;
-  /** Fixed width for the ad item so it never shifts other items. */
   private static readonly AD_WIDTH = 40;
   private static readonly MARQUEE_MS = 250;
 
@@ -54,30 +53,32 @@ export class StatusBar {
   constructor() {
     this.item.command = "kickbacks.debugMenu";
     this.item.show();
-    // Ad item starts hidden; shown via setAd()
     this.adItem.command = "kickbacks.openAdUrl";
-    // Wire activity listener
     this.startActivityTracking();
-    // Start billing tick loop
     this.startTicking();
   }
 
-  /** Track user activity — resets the idle timer on any of these signals. */
+  // ── Activity tracking ────────────────────────────────────────────
+  // Qualquer evento reseta o contador regressivo de idle.
   private startActivityTracking(): void {
     const reset = () => { this.lastActivityMs = Date.now(); };
     try { vscode.window.onDidChangeTextEditorSelection(reset); } catch {}
     try { vscode.window.onDidChangeActiveTextEditor(reset); } catch {}
-    try { vscode.window.onDidChangeWindowState((e) => { if (e.focused) reset(); }); } catch {}
+    try { vscode.window.onDidChangeTextEditorVisibleRanges(reset); } catch {}  // scroll
+    // Window focus: mestre do billing
+    try {
+      vscode.window.onDidChangeWindowState((e) => {
+        this._windowFocused = e.focused;
+        if (this._windowFocused) reset();  // voltou → reseta contador
+      });
+    } catch {}
   }
 
-  /** Billing tick loop with Hermes-style decay. Every 5s we check idle
-   *  duration and adjust the tick interval:
-   *    0-30s  → tick every 5s  (full rate)
-   *    30-60s → tick every 10s
-   *    1-2min → tick every 30s
-   *    2-5min → tick every 60s
-   *    >5min  → stop billing (ad still visible)
-   */
+  // ── Billing tick ─────────────────────────────────────────────────
+  // Dois níveis:
+  //   1. Mestre: se _windowFocused === false → nunca billing (nem avalia idle)
+  //   2. Contador: 5min sem eventos mesmo com foco → "dúvida" → para billing
+  // Cor do banner reflete o estado (amarelo = billando, cinza = pausado).
   private startTicking(): void {
     if (this.tickInterval) clearInterval(this.tickInterval);
     this.tickInterval = setInterval(() => {
@@ -85,45 +86,42 @@ export class StatusBar {
         const idleMs = Date.now() - this.lastActivityMs;
         const idleSec = idleMs / 1000;
 
-        let tickIntervalMs = 5000; // default
-        let shouldTick = false;
+        // Master switch
+        let billable = this._windowFocused;
+        let tickIntervalMs = 5000;
 
-        if (idleSec < 30) {
-          tickIntervalMs = 5000;
-          shouldTick = true;
-        } else if (idleSec < 60) {
-          tickIntervalMs = 10000;
-          shouldTick = true;
-        } else if (idleSec < 120) {
-          tickIntervalMs = 30000;
-          shouldTick = true;
-        } else if (idleSec < 300) {
-          tickIntervalMs = 60000;
-          shouldTick = true;
-        } else {
-          // >5 min AFK: stop billing
-          shouldTick = false;
+        if (billable) {
+          // Contador regressivo com decay
+          if (idleSec >= 300) {
+            billable = false;   // >5min idle com foco → dúvida → corta
+          } else if (idleSec >= 120) {
+            tickIntervalMs = 60000;
+          } else if (idleSec >= 60) {
+            tickIntervalMs = 30000;
+          } else if (idleSec >= 30) {
+            tickIntervalMs = 10000;
+          }
+          // <30s: tickIntervalMs = 5000 (padrão)
         }
 
-        if (shouldTick && this._onTick) {
-          this.tickCount++;
+        // Banner color reflects billing state
+        this.adItem.color = billable ? AD_COLOR : AD_PAUSED;
+
+        if (billable && this._onTick) {
           this._onTick(tickIntervalMs);
         }
       } catch { /* prime directive */ }
     }, 5000);
   }
 
-  /** Show or update the ad item alongside the earnings. */
-  setAd(text: string, clickUrl: string, iconUrl?: string): void {
-    try { console.log("[Kickbacks] setAd called:", text.slice(0, 40)); } catch {}
+  // ── Ad display ───────────────────────────────────────────────────
+  setAd(text: string, clickUrl: string, _iconUrl?: string): void {
     this._adText = text;
     this._adClickUrl = clickUrl;
-    this._adIconUrl = iconUrl || "";
     this._marqueeOffset = 0;
     this._paintAd();
     this.adItem.color = AD_COLOR;
     this.adItem.show();
-    // Start marquee scrolling for long text
     this._stopMarquee();
     if (text.length > StatusBar.AD_WIDTH) {
       this._marqueeTimer = setInterval(() => {
@@ -133,30 +131,23 @@ export class StatusBar {
     }
   }
 
-  /** Hide the ad item. */
   hideAd(): void {
     this._stopMarquee();
     this.adItem.hide();
     this._adText = "";
     this._adClickUrl = "";
-    this._adIconUrl = "";
   }
 
   private _paintAd(): void {
     const raw = this._adText;
     const text = this.escape(raw);
     const w = StatusBar.AD_WIDTH;
-    // Always produce exactly w characters of visible text. Use spaces for
-    // padding (not special Unicode spaces, which render inconsistently).
-    // This keeps the status bar slot at a stable pixel width.
     const prefix = "$(megaphone) ";
     if (raw.length <= w - prefix.length) {
       this.adItem.text = prefix + text.padEnd(w - prefix.length, " ");
       this.adItem.tooltip = `Open ${this._adClickUrl || raw}`;
       return;
     }
-    // Marquee: always render exactly w characters. The sliding window
-    // changes WHICH w characters are visible, not HOW MANY.
     const gap = "   >>   ";
     const content = prefix + raw;
     const padded = content + gap + content;
@@ -175,13 +166,12 @@ export class StatusBar {
   }
 
   private escape(s: string): string {
-    // Status bar text uses $(icon) syntax — escape $ so ad text with $ doesn't break
     return s.replace(/\$/g, "\\$");
   }
 
-  /** Get the current ad click URL (for the openAdUrl command). */
   get adClickUrl(): string { return this._adClickUrl; }
 
+  // ── Earnings item ────────────────────────────────────────────────
   private reloadLock = false;
 
   private static isRoutine(s: SbState): boolean {
@@ -189,7 +179,6 @@ export class StatusBar {
       || (s.kind === "debug" && s.on !== false);
   }
 
-  /** True when there's a visible ad (used by onTick to decide state). */
   get hasAd(): boolean { return this.adItem.text !== ""; }
   get adText(): string { return this._adText; }
 
