@@ -75,6 +75,34 @@ export class AuthClient {
   accessToken(): string | null { return this.at; }
   signedIn(): boolean { return this.at != null; }
 
+  /** Decodifica o JWT (sem verificar assinatura) pra ler o `exp` e saber
+   *  quantos ms faltam pra expirar. Retorna null se não for possível
+   *  (dev-bypass, token mal formado, etc). Usado pelo refresh proativo. */
+  msUntilExpiry(): number | null {
+    const t = this.at;
+    if (!t || t === "dev-bypass") return null;
+    try {
+      const b64 = t.split(".")[1]
+        .replace(/-/g, "+").replace(/_/g, "/");
+      const pad = b64.length % 4 ? "=".repeat(4 - b64.length % 4) : "";
+      const payload = JSON.parse(atob(b64 + pad));
+      return payload.exp ? (payload.exp * 1000 - Date.now()) : null;
+    } catch { return null; }
+  }
+
+  /** Refresh proativo: se o token estiver a menos de 5 min de expirar,
+   *  renova agora em vez de esperar o próximo 403. Seguro chamar a
+   *  qualquer momento — o refresh() já faz single-flight. */
+  async proactiveRefreshIfNeeded(): Promise<void> {
+    try {
+      const msLeft = this.msUntilExpiry();
+      if (msLeft !== null && msLeft < 5 * 60 * 1000 && msLeft > 0) {
+        dlog("ext", "auth.proactive_refresh", { msLeft });
+        await this.refresh();
+      }
+    } catch { /* never disrupt */ }
+  }
+
   /** For `vibe-ads.status` / debug menu: which at-rest scheme is in use and
    *  whether the OS keyring actually round-tripped (the original "didn't catch
    *  that I was signed in" was an undetected keyring-less environment). */

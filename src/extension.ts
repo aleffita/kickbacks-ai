@@ -801,6 +801,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
     // ─── Periodic timers ────────────────────────────────────────────
     actx.timers.push(setInterval(checkKill, 30_000));
+    // Proactive auth refresh: verifica a cada 2min se o token está perto
+    // de expirar e renova antes do próximo 403. Evita janelas de métricas
+    // perdidas por token expirado no servidor.
+    actx.timers.push(setInterval(() => {
+      try { void auth.proactiveRefreshIfNeeded(); }
+      catch { /* prime directive */ }
+    }, 120_000));
     // Banner session is EVENT-DRIVEN — no periodic timer.
     // Portfolio rotation → `ad` updated → showActive() repaints status bar.
     // _lastBannerId is tracked in the ad init block above.
@@ -925,7 +932,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         try {
           const sb = statusBar as StatusBar;
           const url = sb.adClickUrl;
-          if (!url) return;
+          if (!url) { dlog("ext", "banner.click.no_url", { adId: sb.adId }); return; }
           // Serving gate (igual overlay)
           if (!canServeAds()) {
             dlog("ext", "banner.click.gated", {});
@@ -949,7 +956,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // Gira a roleta: reseta sessão (cor → cinza) + força nova ad
           sb.resetAdSession();
           void sb.refreshAdNow();
-        } catch { /* best-effort */ }
+        } catch (e) { dlog("ext", "banner.click.error", { msg: String(e).slice(0,120) }); }
       }));
 
     // ─── E2E test hooks ─────────────────────────────────────────────
