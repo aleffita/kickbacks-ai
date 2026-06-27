@@ -139,6 +139,9 @@ export class StatusBar {
   }
 
   private _paintAd(): void {
+    // VS Code pode esconder o item ao trocar de editor ativo.
+    // Reexibir a cada pintura garante que ele nunca suma.
+    this.adItem.show();
     const raw = this._adText;
     const text = this.escape(raw);
     const w = StatusBar.AD_WIDTH;
