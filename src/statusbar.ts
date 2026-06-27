@@ -48,7 +48,7 @@ export class StatusBar {
   private static readonly AD_WIDTH = 36;
   private static readonly MARQUEE_MS = 250;
   /** Textos maiores que isso disparam o marquee (scroll). */
-  private static readonly MARQUEE_THRESHOLD = 24;
+  // Marquee SEMPRE ativo — todo texto scrolla
 
   text = "";
 
@@ -119,21 +119,19 @@ export class StatusBar {
 
   // ── Ad display ───────────────────────────────────────────────────
   setAd(text: string, clickUrl: string, _iconUrl?: string): void {
-    // Só reseta o marquee se o TEXTO mudou — mesma ad com novo id não
-    // deve dar um pulo visual.
+    // Só reseta marquee se o texto mudou — mesmo texto = scroll suave
     if (text !== this._adText) this._marqueeOffset = 0;
     this._adText = text;
     this._adClickUrl = clickUrl;
+    // Marquee SEMPRE rodando (todo texto scrolla)
+    this._stopMarquee();
+    this._marqueeTimer = setInterval(() => {
+      this._marqueeOffset++;
+      this._paintAd();
+    }, StatusBar.MARQUEE_MS);
     this._paintAd();
     this.adItem.color = AD_COLOR;
     this.adItem.show();
-    this._stopMarquee();
-    if (text.length > StatusBar.MARQUEE_THRESHOLD) {
-      this._marqueeTimer = setInterval(() => {
-        this._marqueeOffset++;
-        this._paintAd();
-      }, StatusBar.MARQUEE_MS);
-    }
   }
 
   hideAd(): void {
@@ -146,14 +144,8 @@ export class StatusBar {
   private _paintAd(): void {
     this.adItem.show();  // reexibe em cada pintura (marquee, fetch, tick)
     const raw = this._adText;
-    const text = this.escape(raw);
     const w = StatusBar.AD_WIDTH;
     const prefix = "📣 ";  // megaphone emoji
-    if (raw.length <= StatusBar.MARQUEE_THRESHOLD) {
-      this.adItem.text = prefix + text.padEnd(w - prefix.length, " ");
-      this.adItem.tooltip = `Open ${this._adClickUrl || raw}`;
-      return;
-    }
     const gap = "   >>   ";
     const availW = w - prefix.length;
     const padded = raw + gap + raw;
