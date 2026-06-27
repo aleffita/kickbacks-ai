@@ -104,8 +104,9 @@ export class StatusBar {
           // <30s: tickIntervalMs = 5000 (padrão)
         }
 
-        // Banner color reflects billing state
+        // Banner color reflects billing state + keep visible
         this.adItem.color = billable ? AD_COLOR : AD_PAUSED;
+        try { this.adItem.show(); } catch {}
 
         if (billable && this._onTick) {
           this._onTick(tickIntervalMs);
