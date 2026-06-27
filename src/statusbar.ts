@@ -117,9 +117,11 @@ export class StatusBar {
 
   // ── Ad display ───────────────────────────────────────────────────
   setAd(text: string, clickUrl: string, _iconUrl?: string): void {
+    // Só reseta o marquee se o TEXTO mudou — mesma ad com novo id não
+    // deve dar um pulo visual.
+    if (text !== this._adText) this._marqueeOffset = 0;
     this._adText = text;
     this._adClickUrl = clickUrl;
-    this._marqueeOffset = 0;
     this._paintAd();
     this.adItem.color = AD_COLOR;
     this.adItem.show();
