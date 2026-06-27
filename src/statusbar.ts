@@ -146,7 +146,7 @@ export class StatusBar {
     const w = StatusBar.AD_WIDTH;
     const prefix = "📣 ";  // megaphone emoji
     if (raw.length <= w - prefix.length) {
-      this.adItem.text = prefix + text.padEnd(w - prefix.length, " ");
+      this.adItem.text = prefix + text.padEnd(w - prefix.length, "·");
       this.adItem.tooltip = `Open ${this._adClickUrl || raw}`;
       return;
     }
@@ -156,7 +156,7 @@ export class StatusBar {
     const maxStart = Math.max(0, padded.length - availW);
     const start = this._marqueeOffset % (maxStart + 1);
     const slice = padded.slice(start, start + availW);
-    this.adItem.text = prefix + this.escape(slice).padEnd(availW, " ");
+    this.adItem.text = prefix + this.escape(slice).padEnd(availW, "·");
     this.adItem.tooltip = `Open ${this._adClickUrl || raw}\n${raw}`;
   }
 
