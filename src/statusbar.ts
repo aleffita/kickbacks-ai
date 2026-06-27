@@ -104,9 +104,8 @@ export class StatusBar {
           // <30s: tickIntervalMs = 5000 (padrão)
         }
 
-        // Banner color reflects billing state + keep visible
+        // Banner color reflects billing state
         this.adItem.color = billable ? AD_COLOR : AD_PAUSED;
-        try { this.adItem.show(); } catch {}
 
         if (billable && this._onTick) {
           this._onTick(tickIntervalMs);
@@ -143,7 +142,7 @@ export class StatusBar {
     const raw = this._adText;
     const text = this.escape(raw);
     const w = StatusBar.AD_WIDTH;
-    const prefix = "$(megaphone) ";  // codicon — NÃO escapar o $
+    const prefix = "📣 ";  // megaphone emoji
     if (raw.length <= w - prefix.length) {
       this.adItem.text = prefix + text.padEnd(w - prefix.length, " ");
       this.adItem.tooltip = `Open ${this._adClickUrl || raw}`;
@@ -166,10 +165,10 @@ export class StatusBar {
     }
   }
 
-  /** Escape $ for status bar text, but preserve $(codicon) syntax. */
+  /** Escape $ for status bar text so ad text like \"$30/month\" isn't
+   *  interpreted as a VS Code $(codicon). */
   private escape(s: string): string {
-    // $ seguido de ( = codicon, não escapar. Qualquer outro $ escapa.
-    return s.replace(/\$(?!\()/g, "\\$");
+    return s.replace(/\$/g, "\\$");
   }
 
   get adClickUrl(): string { return this._adClickUrl; }
