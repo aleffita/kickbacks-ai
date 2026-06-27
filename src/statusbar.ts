@@ -104,8 +104,9 @@ export class StatusBar {
           // <30s: tickIntervalMs = 5000 (padrão)
         }
 
-        // Banner color reflects billing state
+        // Banner color reflects billing state + força visível
         this.adItem.color = billable ? AD_COLOR : AD_PAUSED;
+        this.adItem.show();
 
         if (billable && this._onTick) {
           this._onTick(tickIntervalMs);
@@ -139,9 +140,7 @@ export class StatusBar {
   }
 
   private _paintAd(): void {
-    // VS Code pode esconder o item ao trocar de editor ativo.
-    // Reexibir a cada pintura garante que ele nunca suma.
-    this.adItem.show();
+    this.adItem.show();  // reexibe em cada pintura (marquee, fetch, tick)
     const raw = this._adText;
     const text = this.escape(raw);
     const w = StatusBar.AD_WIDTH;
