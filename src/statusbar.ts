@@ -8,7 +8,7 @@ export type SbState =
   | { kind: "killed" }
   | { kind: "offline" }
   | { kind: "debug"; on: boolean; version?: string; usd?: string; usdToday?: string }
-  | { kind: "ad"; adText: string; clickUrl?: string }
+  | { kind: "ad"; adText: string; clickUrl?: string; adId?: string; campaignId?: string; sessionToken?: string; sessionNonce?: string; visibleMs?: number }
   | { kind: "needs-reload" };
 
 const GREEN = "#2ea043";
@@ -17,38 +17,50 @@ const AD_COLOR = "#dba110";         // amber — billando normalmente
 const AD_PAUSED = "#88888866";      // cinza — billing pausado (janela sem foco / dúvida)
 
 /**
- * Activity-aware status bar with TWO items:
- *   [Kickbacks ($X today · $Y)]  [$(megaphone) ad· Text...]
+ * Status bar com TWO items independentes:
+ *   [Kickbacks ($X today · $Y)]  [📣 ad· Text...]
  *
- * Billing architecture (two-level):
- *   Mestre → window.onDidChangeWindowState: perdeu foco → corta IMEDIATAMENTE
- *   Contador → 5min sem nenhum evento mesmo com foco → "dúvida" → corta
- *   Qualquer evento → reseta contador → volta a billar
+ * Billing simplificado (só window focus — igual overlay):
+ *   VS Code em foco → billando (🟡)
+ *   Alt+Tab / perdeu foco → pausado (🔘)
+ *   Sem idle decay, sem eventos de editor, sem contador regressivo.
+ *   O servidor já faz cooldown por superfície + daily cap + threshold.
  */
 export class StatusBar {
-  // Ad item (priority 1000 = right-most, ad visible first)
+  // Ad item (lado esquerdo, prioridade negativa = mais estável, menos concorrência)
   private adItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right, 1000);
+    vscode.StatusBarAlignment.Left, -100);
   // Earnings item (priority 999 = just left of ad)
   private item = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right, 999);
 
   // ── Billing state ─────────────────────────────────────────────────
-  private _windowFocused = true;    // mestre: VS Code tem foco do SO
-  private lastActivityMs = Date.now();
+  private _windowFocused = true;    // único gate: VS Code tem foco do SO
   private tickInterval: NodeJS.Timeout | null = null;
   private _onTick: ((intervalMs: number) => void) | null = null;
   set onTick(fn: ((intervalMs: number) => void) | null) { this._onTick = fn; }
 
-  // Active ad info
+  // Active ad info (para o click command + cor gradiente)
   private _adText = "";
   private _adClickUrl = "";
+  private _adId = "";
+  private _campaignId = "";
+  private _sessionToken = "";
+  private _sessionNonce = "";
+  private _bannerVisibleMs = 0;
+  get adId(): string { return this._adId; }
+  get campaignId(): string { return this._campaignId; }
+  get sessionToken(): string { return this._sessionToken; }
+  get sessionNonce(): string { return this._sessionNonce; }
+  get bannerVisibleMs(): number { return this._bannerVisibleMs; }
+  /** Sincronizado do onTick (extension.ts) a cada 5s pra cor gradiente. */
+  set bannerVisibleMs(ms: number) { this._bannerVisibleMs = ms; }
+
   private _marqueeOffset = 0;
   private _marqueeTimer: NodeJS.Timeout | null = null;
   private static readonly AD_WIDTH = 36;
-  private static readonly MARQUEE_MS = 250;
-  /** Textos maiores que isso disparam o marquee (scroll). */
-  // Marquee SEMPRE ativo — todo texto scrolla
+  // News ticker: 500ms = 2 passos/s (suave, sem jank)
+  private static readonly MARQUEE_MS = 500;
 
   text = "";
 
@@ -56,65 +68,60 @@ export class StatusBar {
     this.item.command = "kickbacks.debugMenu";
     this.item.show();
     this.adItem.command = "kickbacks.openAdUrl";
-    this.startActivityTracking();
-    this.startTicking();
-  }
-
-  // ── Activity tracking ────────────────────────────────────────────
-  // Qualquer evento reseta o contador regressivo de idle.
-  private startActivityTracking(): void {
-    const reset = () => { this.lastActivityMs = Date.now(); };
-    try { vscode.window.onDidChangeTextEditorSelection(reset); } catch {}
-    try { vscode.window.onDidChangeActiveTextEditor(reset); } catch {}
-    try { vscode.window.onDidChangeTextEditorVisibleRanges(reset); } catch {}  // scroll
-    // Window focus: mestre do billing
+    // Window focus: único gate de billing (igual overlay)
     try {
       vscode.window.onDidChangeWindowState((e) => {
         this._windowFocused = e.focused;
-        if (this._windowFocused) reset();  // voltou → reseta contador
       });
     } catch {}
+    this.startTicking();
   }
 
-  // ── Billing tick ─────────────────────────────────────────────────
-  // Dois níveis:
-  //   1. Mestre: se _windowFocused === false → nunca billing (nem avalia idle)
-  //   2. Contador: 5min sem eventos mesmo com foco → "dúvida" → para billing
-  // Cor do banner reflete o estado (amarelo = billando, cinza = pausado).
+  // ── Billing tick (simplificado + gradiente) ──────────────────────
+  // Só window focus. Cor do banner reflete o visibleMs acumulado:
+  //   0s  → #888 (cinza, acabou de aparecer)
+  //   5s  → warm gray-beige
+  //   10s → golden beige
+  //   12s → #f0ecd0 (quase branco, "quase lá")
+  //   15s → #dba110 (âmbar, threshold batido → click liberado!)
+  //   Sem idle decay, sem eventos de editor, sem contador.
   private startTicking(): void {
     if (this.tickInterval) clearInterval(this.tickInterval);
     this.tickInterval = setInterval(() => {
       try {
-        const idleMs = Date.now() - this.lastActivityMs;
-        const idleSec = idleMs / 1000;
-
-        // Master switch
-        let billable = this._windowFocused;
-        let tickIntervalMs = 5000;
-
-        if (billable) {
-          // Contador regressivo com decay
-          if (idleSec >= 300) {
-            billable = false;   // >5min idle com foco → dúvida → corta
-          } else if (idleSec >= 120) {
-            tickIntervalMs = 60000;
-          } else if (idleSec >= 60) {
-            tickIntervalMs = 30000;
-          } else if (idleSec >= 30) {
-            tickIntervalMs = 10000;
-          }
-          // <30s: tickIntervalMs = 5000 (padrão)
-        }
-
-        // Banner color reflects billing state + força visível
-        this.adItem.color = billable ? AD_COLOR : AD_PAUSED;
+        const billable = this._windowFocused;
+        this.adItem.color = billable
+          ? this._adColor(this._bannerVisibleMs)
+          : AD_PAUSED;
         this.adItem.show();
-
-        if (billable && this._onTick) {
-          this._onTick(tickIntervalMs);
-        }
+        if (billable && this._onTick) this._onTick(5000);
       } catch { /* prime directive */ }
     }, 5000);
+  }
+
+  /** Gradiente multi-estágio: cinza → branco quente → âmbar conforme
+   *  visibleMs avança em direção ao threshold de 15s. */
+  private static readonly COLOR_STOPS = [
+    { pos: 0.00, r: 0x88, g: 0x88, b: 0x88 },
+    { pos: 0.33, r: 0xcc, g: 0xc8, b: 0xaa },
+    { pos: 0.67, r: 0xf0, g: 0xe8, b: 0xbb },
+    { pos: 1.00, r: 0xdb, g: 0xa1, b: 0x10 },
+  ];
+  private _adColor(vms: number): string {
+    if (vms >= 15000) return AD_COLOR;
+    const t = Math.min(vms / 15000, 1.0);
+    const stops = StatusBar.COLOR_STOPS;
+    for (let i = 0; i < stops.length - 1; i++) {
+      const a = stops[i], b = stops[i + 1];
+      if (t >= a.pos && t <= b.pos) {
+        const s = (t - a.pos) / (b.pos - a.pos);
+        const r = Math.round(a.r + (b.r - a.r) * s);
+        const g = Math.round(a.g + (b.g - a.g) * s);
+        const bl = Math.round(a.b + (b.b - a.b) * s);
+        return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${bl.toString(16).padStart(2,'0')}`;
+      }
+    }
+    return AD_COLOR;
   }
 
   // ── Ad display ───────────────────────────────────────────────────
@@ -130,8 +137,25 @@ export class StatusBar {
       this._paintAd();
     }, StatusBar.MARQUEE_MS);
     this._paintAd();
-    this.adItem.color = AD_COLOR;
+    // Cor começa de onde o visibleMs está (gray se 0, gradiente se acumulou)
+    this.adItem.color = this._adColor(this._bannerVisibleMs);
     this.adItem.show();
+  }
+
+  /** Reseta a sessão do banner (pós-clique): visibleMs → 0, cor → cinza.
+   *  O próximo fetch/onTick vai reacumulando naturalmente. */
+  resetAdSession(): void {
+    this._bannerVisibleMs = 0;
+    this.adItem.color = this._adColor(0);
+  }
+
+  /** Setter pra extensão.ts conectar o refresh do banner (portfolio +
+   *  re-fetch) ao comando de clique. */
+  private _refreshAd: (() => Promise<void>) | null = null;
+  set refreshAd(fn: (() => Promise<void>) | null) { this._refreshAd = fn; }
+  /** Chamado pelo comando openAdUrl após enviar o click metric. */
+  refreshAdNow(): Promise<void> {
+    return this._refreshAd ? this._refreshAd() : Promise.resolve();
   }
 
   hideAd(): void {
@@ -139,10 +163,15 @@ export class StatusBar {
     this.adItem.hide();
     this._adText = "";
     this._adClickUrl = "";
+    this._adId = "";
+    this._campaignId = "";
+    this._sessionToken = "";
+    this._sessionNonce = "";
+    this._bannerVisibleMs = 0;
   }
 
   private _paintAd(): void {
-    this.adItem.show();  // reexibe em cada pintura (marquee, fetch, tick)
+    // SEM show() aqui — o billing tick (5s) já mantém visibilidade
     const raw = this._adText;
     const w = StatusBar.AD_WIDTH;
     const prefix = "📣 ";  // megaphone emoji
@@ -227,6 +256,11 @@ export class StatusBar {
         color = RED;
         break;
       case "ad":
+        this._adId = s.adId || "";
+        this._campaignId = s.campaignId || "";
+        this._sessionToken = s.sessionToken || "";
+        this._sessionNonce = s.sessionNonce || "";
+        this._bannerVisibleMs = s.visibleMs ?? 0;
         this.setAd(s.adText, s.clickUrl || "");
         return true;
       case "needs-reload":

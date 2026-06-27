@@ -37,7 +37,7 @@ import { setupCliSync } from "./activation/cliSync";
 import { setupCliTick } from "./activation/cliTick";
 import { createActivationContext, type ActivationContext } from "./activation/context";
 import { resetServingGate, wireServingGateEnabled, setKillPosture,
-  killPosture, canPatch, servingSuspended, servingVerdict }
+  killPosture, canPatch, canServeAds, servingSuspended, servingVerdict }
   from "./servingGate";
 import { TestHooks } from "./testHooks";
 import { buildLabel, buildVersion } from "./buildinfo";
@@ -657,9 +657,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     await bringUpServing();
 
     // ─── Banner surface (status bar) ────────────────────────────────
-    // Uses the SAME loopback /ad endpoint as the overlay, polled at 10s.
-    // No separate adQueue/rotationIdx — whatever the loopback returns is
-    // the current ad (updated by refreshPortfolio every 60s).
+    // Lê direto de getBannerAd() (slot próprio, próximo ad da fila), sem HTTP.
+    // Lifecycle independente do overlay — cada surface tem seu próprio ad slot
+    // e sessionNonce, então não há double billing.
     {
       const _bannerNonce = { value: crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10)) };
       let _bannerVisibleMs = 0;
@@ -670,51 +670,53 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
       const fetchBannerAd = () => {
         try {
-          const loopbase = wvResult.lbInfo?.base;
-          if (!loopbase) return;
+          const bAd = wvResult.getBannerAd?.() ?? ad;
+          if (!bAd || !bAd.adText) return;
           _bannerFetchCount++;
-          fetch(loopbase + "/ad").then(r => r.json()).then(j => {
-            if (!j || !j.adText) return;
-            // Match the overlay's change detection (block.asset.js pollAd):
-            // adId, adText, clickUrl, iconUrl — any change = new creative
-            const id = j.adId || j.adText;
-            const txt = j.adText;
-            const url = j.clickUrl || "";
-            const changed = (j.adId && j.adId !== _lastBannerId)
-                         || (txt !== _lastBannerText)
-                         || (url !== _lastBannerUrl);
-            if (_bannerFetchCount <= 5 || _bannerFetchCount % 30 === 0) {
-              dlog("ext", "banner.fetch", { n: _bannerFetchCount, adId: String(id).slice(0,12),
-                adText: String(txt).slice(0,30), changed });
-            }
-            if (changed) {
-              _lastBannerId = j.adId || null;
-              _lastBannerText = txt;
-              _lastBannerUrl = url;
-              _bannerVisibleMs = 0; // new ad session → reset accumulated time
-              _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
-              metrics.send("impression_rendered", { adId: id, campaignId: "",
-                ccVersion, corr: id + "." + Math.random().toString(36).slice(2, 8),
-                sessionToken: "", surface: "banner",
-                eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
-              metrics.send("impression_viewable", { adId: id, campaignId: "",
-                ccVersion, corr: id + "." + Math.random().toString(36).slice(2, 8),
-                sessionToken: "", surface: "banner",
-                eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
-            }
-            // Always update the display — keeps text in sync even when adId
-            // hasn't changed but the creative rotated (same vendor, new copy).
-            statusBar.set({ kind: "ad", adText: txt, clickUrl: url });
-          }).catch((e) => { dlog("ext", "banner.fetch_error", { msg: String(e).slice(0,80) }); });
+          const id = bAd.adId;
+          const txt = bAd.adText;
+          const url = bAd.clickUrl;
+          const campaignId = bAd.campaignId;
+          const sessionToken = bAd.sessionToken;
+
+          const changed = (id !== _lastBannerId)
+                       || (txt !== _lastBannerText)
+                       || (url !== _lastBannerUrl);
+          if (_bannerFetchCount <= 5 || _bannerFetchCount % 15 === 0) {
+            dlog("ext", "banner.fetch", { n: _bannerFetchCount, adId: String(id).slice(0,12),
+              adText: String(txt).slice(0,30), changed,
+              hasToken: !!sessionToken });
+          }
+          if (changed) {
+            _lastBannerId = id;
+            _lastBannerText = txt;
+            _lastBannerUrl = url;
+            _bannerVisibleMs = 0;
+            _bannerNonce.value = crypto.randomUUID?.() ?? ("bnr-" + Math.random().toString(36).slice(2, 10));
+            metrics.send("impression_rendered", { adId: id, campaignId,
+              ccVersion, corr: id + "." + Math.random().toString(36).slice(2, 8),
+              sessionToken, surface: "banner",
+              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
+            metrics.send("impression_viewable", { adId: id, campaignId,
+              ccVersion, corr: id + "." + Math.random().toString(36).slice(2, 8),
+              sessionToken, surface: "banner",
+              eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()), sessionNonce: _bannerNonce.value });
+          }
+          // Always update the display — keeps text in sync even when adId
+          // hasn't changed but the creative rotated (same vendor, new copy).
+          statusBar.set({ kind: "ad", adText: txt, clickUrl: url,
+            adId: id, campaignId, sessionToken,
+            sessionNonce: _bannerNonce.value, visibleMs: _bannerVisibleMs });
         } catch (e) { dlog("ext", "banner.fetch_crash", { msg: String(e).slice(0,80) }); }
       };
-      // Wire onTick — StatusBar calls it with the current tick interval.
-      // visibleMs is cumulative (same as overlay's view_tick model).
+      // Wire onTick — StatusBar calls it a cada 5s.
+      // visibleMs é cumulativo (mesmo modelo do overlay's view_tick).
       (statusBar as StatusBar).onTick = (intervalMs: number) => {
         try {
           const bAd = wvResult.getBannerAd?.() ?? ad;
           if (!bAd) return;
           _bannerVisibleMs += intervalMs;
+          (statusBar as StatusBar).bannerVisibleMs = _bannerVisibleMs; // sync pra cor gradiente
           metrics.send("view_tick", { adId: bAd.adId, campaignId: bAd.campaignId,
             ccVersion, corr: bAd.adId + "." + Math.random().toString(36).slice(2, 8),
             sessionToken: bAd.sessionToken, surface: "banner",
@@ -722,9 +724,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             eventUuid: crypto.randomUUID?.() ?? ("evt-" + Date.now()) });
         } catch { /* best-effort */ }
       };
-      // Initial fetch + 10s poll (same as overlay's pollAd)
+      // Initial fetch + poll a cada 30s (leitura de memória, sem HTTP)
       fetchBannerAd();
-      actx.timers.push(setInterval(fetchBannerAd, 10_000));
+      actx.timers.push(setInterval(fetchBannerAd, 30_000));
+      // Conecta o refresh pós-clique: refresh portfólio + re-leitura do banner
+      (statusBar as StatusBar).refreshAd = async () => {
+        try {
+          if (wvResult.refreshPortfolioNow) await wvResult.refreshPortfolioNow(true);
+          fetchBannerAd();
+        } catch { /* best-effort */ }
+      };
     }
 
     if (ad && override?.killed !== true && webviewMode() === "off") {
@@ -908,14 +917,38 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       session, updater, ccVersion, showActive);
 
     // ─── Status bar ad click command ─────────────────────────────────
-    // Opens the current ad's URL in the default browser. The ad URL is
-    // updated by statusBar.setAd() whenever a new ad is shown.
+    // Anti-misclick floor (mesmo do overlay): 15s de visibleMs acumulado
+    // antes de registrar um clique como válido.
+    const CLICK_THRESHOLD_MS = 15_000;
     ctx.subscriptions.push(
       vscode.commands.registerCommand("kickbacks.openAdUrl", async () => {
         try {
           const sb = statusBar as StatusBar;
           const url = sb.adClickUrl;
-          if (url) await vscode.env.openExternal(vscode.Uri.parse(url));
+          if (!url) return;
+          // Serving gate (igual overlay)
+          if (!canServeAds()) {
+            dlog("ext", "banner.click.gated", {});
+            return;
+          }
+          // Anti-misclick: precisa de 15s acumulados de visibilidade
+          if (sb.bannerVisibleMs < CLICK_THRESHOLD_MS) {
+            dlog("ext", "banner.click.early", { adId: sb.adId,
+              visibleMs: sb.bannerVisibleMs });
+            return;
+          }
+          // Envia click metric (mesmo modelo do overlay)
+          const eventUuid = newMetricEventUuid();
+          const corr = (sb.adId || "banner") + "." + Math.random().toString(36).slice(2, 8);
+          metrics.send("click", { adId: sb.adId, campaignId: sb.campaignId,
+            ccVersion, corr, sessionToken: sb.sessionToken,
+            surface: "banner", eventUuid, visibleMs: sb.bannerVisibleMs });
+          // Abre URL do anunciante
+          await vscode.env.openExternal(vscode.Uri.parse(url));
+          scheduleEarningsRefresh();
+          // Gira a roleta: reseta sessão (cor → cinza) + força nova ad
+          sb.resetAdSession();
+          void sb.refreshAdNow();
         } catch { /* best-effort */ }
       }));
 
