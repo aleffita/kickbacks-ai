@@ -176,7 +176,6 @@ export async function setupWebviewInjection(
     !!attr.demo === !!auth.accessToken();
 
   const codexAdapter = actx.codexAdapter;
-  const antigravityAdapter = actx.antigravityAdapter;
   actx.loopback = new Loopback({
     onEvent: (k, payload) => {
       // Billing gate (wave 2, audit #3): the webview's pollAd ignores the
@@ -367,29 +366,6 @@ export async function setupWebviewInjection(
   // Idempotent: the 10s pass re-validates via isPatched/marker checks.
   if (!claudeCompatible) applyCodex();
   actx.timers.push(setTimeout(applyCodex, 10_000));
-
-  // --- Antigravity IDE (jetskiAgent) patch ------------------------------
-  // Uses the same ad/loopback params as the primary target. Patch is
-  // applied on a 15s deferred timeout (the webview may not have loaded
-  // yet at activation time — wait for it).
-  const applyAntigravity = (): void => {
-    if (!antigravityAdapter) return;
-    if (!canPatch()) { dlog("ext", "antigravity.skip", { reason: "serving-gate" }); return; }
-    if (port < 0) { dlog("ext", "antigravity.skip", { reason: "no-loopback" }); return; }
-    try {
-      const apf = antigravityAdapter.preflight();
-      if (!apf.compatible) {
-        dlog("ext", "antigravity.skip", { reason: apf.reason });
-        return;
-      }
-      const ar = antigravityAdapter.applyPatch(patchParams);
-      dlog("ext", "antigravity.applyPatch", { ok: ar.ok, reason: ar.reason });
-      if (ar.ok) void statusBarShowActive();
-    } catch (e) {
-      dlog("ext", "antigravity.error", { msg: errMsg(e) });
-    }
-  };
-  actx.timers.push(setTimeout(applyAntigravity, 15_000));
 
   // Reassert the injection on a timer. The Claude branch is gated on the
   // boot-time compatibility flag: a codex-only boot would otherwise retry a
