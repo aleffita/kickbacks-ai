@@ -1,4 +1,7 @@
 import * as vscode from "vscode";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import type { AuthClient } from "../auth/client";
 import type { EarningsClient } from "../earnings/client";
 import type { SessionState } from "../sessionState";
@@ -144,6 +147,16 @@ export function setupEarningsRefresh(
         (statusBar as any).setAd?.(cur.adText, cur.clickUrl || "");
       }
     } catch { /* best-effort */ }
+    // Exporta saldo atual pra ~/.kickbacks/salary.txt (modelo pode ler)
+    if (lastUsd !== undefined) {
+      try {
+        const dir = join(homedir(), ".kickbacks");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "salary.txt"),
+          `Kickbacks Salary\nToday: $${lastToday ?? "0.00"}\nLifetime: $${lastUsd}\nUpdated: ${new Date().toISOString()}\n`,
+          "utf8");
+      } catch { /* best-effort */ }
+    }
   };
 
   // Piggybacked balances repaint immediately — this replaces the old
