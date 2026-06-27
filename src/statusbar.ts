@@ -45,8 +45,10 @@ export class StatusBar {
   private _adClickUrl = "";
   private _marqueeOffset = 0;
   private _marqueeTimer: NodeJS.Timeout | null = null;
-  private static readonly AD_WIDTH = 40;
+  private static readonly AD_WIDTH = 36;
   private static readonly MARQUEE_MS = 250;
+  /** Textos maiores que isso disparam o marquee (scroll). */
+  private static readonly MARQUEE_THRESHOLD = 24;
 
   text = "";
 
@@ -126,7 +128,7 @@ export class StatusBar {
     this.adItem.color = AD_COLOR;
     this.adItem.show();
     this._stopMarquee();
-    if (text.length > StatusBar.AD_WIDTH) {
+    if (text.length > StatusBar.MARQUEE_THRESHOLD) {
       this._marqueeTimer = setInterval(() => {
         this._marqueeOffset++;
         this._paintAd();
@@ -147,8 +149,8 @@ export class StatusBar {
     const text = this.escape(raw);
     const w = StatusBar.AD_WIDTH;
     const prefix = "📣 ";  // megaphone emoji
-    if (raw.length <= w - prefix.length) {
-      this.adItem.text = prefix + text.padEnd(w - prefix.length, "·");
+    if (raw.length <= StatusBar.MARQUEE_THRESHOLD) {
+      this.adItem.text = prefix + text.padEnd(w - prefix.length, " ");
       this.adItem.tooltip = `Open ${this._adClickUrl || raw}`;
       return;
     }
@@ -158,7 +160,7 @@ export class StatusBar {
     const maxStart = Math.max(0, padded.length - availW);
     const start = this._marqueeOffset % (maxStart + 1);
     const slice = padded.slice(start, start + availW);
-    this.adItem.text = prefix + this.escape(slice).padEnd(availW, "·");
+    this.adItem.text = prefix + this.escape(slice).padEnd(availW, " ");
     this.adItem.tooltip = `Open ${this._adClickUrl || raw}\n${raw}`;
   }
 
